@@ -44,9 +44,6 @@ dirLight.shadow.bias = -0.0005;
 
 scene.add(dirLight);
 
-const helper = new THREE.CameraHelper(dirLight.shadow.camera);
-scene.add(helper);
-
 // 3. Helpers (Ground)
 const plane = new THREE.Mesh(
   new THREE.PlaneGeometry(5000, 5000),
