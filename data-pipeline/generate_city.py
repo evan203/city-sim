@@ -4,7 +4,7 @@ import os
 
 # 1. Configuration
 PLACE_NAME = "Wisconsin State Capitol, Madison, USA"
-DIST = 1500  # Meters radius around center
+DIST = 2400  # Meters radius around center
 
 # 2. Download Data
 print(f"Downloading data for {PLACE_NAME}...")
