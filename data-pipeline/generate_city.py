@@ -3,8 +3,8 @@ import json
 import os
 
 # 1. Configuration
-PLACE_NAME = "Empire State Building, New York, USA"
-DIST = 500  # Meters radius around center
+PLACE_NAME = "Wisconsin State Capitol, Madison, USA"
+DIST = 1500  # Meters radius around center
 
 # 2. Download Data
 print(f"Downloading data for {PLACE_NAME}...")

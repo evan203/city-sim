@@ -4,6 +4,7 @@
   "description": "Map Madison interactively in 3D, and simulate building transit lines.",
   "main": "index.js",
   "scripts": {
+    "gen-map": "./data-pipeline/.venv/bin/python data-pipeline/generate_city.py",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

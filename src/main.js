@@ -4,27 +4,56 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 // 1. Setup Scene
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcccccc);
-scene.fog = new THREE.FogExp2(0xcccccc, 0.002);
+scene.fog = new THREE.FogExp2(0xcccccc, 0.0001);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
-camera.position.set(200, 200, 200);
+const camera = new THREE.PerspectiveCamera(
+  60,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  20000);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  logarithmicDepthBuffer: true
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Optional: Makes them look nicer
 document.body.appendChild(renderer.domElement);
 
 // 2. Lights
-const dirLight = new THREE.DirectionalLight(0xffffff, 3);
-dirLight.position.set(100, 300, 100);
+
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+scene.add(hemiLight);
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+dirLight.position.set(200, 400, 100);
+dirLight.castShadow = true;
+
+dirLight.shadow.mapSize.width = 4096;
+dirLight.shadow.mapSize.height = 4096;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 4000;
+
+const d = 2000;
+dirLight.shadow.camera.left = -d;
+dirLight.shadow.camera.right = d;
+dirLight.shadow.camera.top = d;
+dirLight.shadow.camera.bottom = -d;
+dirLight.shadow.bias = -0.0005;
+
 scene.add(dirLight);
-scene.add(new THREE.AmbientLight(0x404040));
+
+const helper = new THREE.CameraHelper(dirLight.shadow.camera);
+scene.add(helper);
 
 // 3. Helpers (Ground)
 const plane = new THREE.Mesh(
-  new THREE.PlaneGeometry(2000, 2000),
-  new THREE.MeshBasicMaterial({ color: 0x999999 })
+  new THREE.PlaneGeometry(5000, 5000),
+  new THREE.MeshStandardMaterial({ color: 0x999999 })
 );
 plane.rotation.x = -Math.PI / 2;
+plane.receiveShadow = true;
 scene.add(plane);
 
 // 4. Load Data & Create Buildings
@@ -40,8 +69,16 @@ function createCity(data) {
   // Move pivot to bottom of box so scaling works comfortably
   geometry.translate(0, 0.5, 0);
 
-  const material = new THREE.MeshLambertMaterial({ color: 0x44aa88 });
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xccffff,
+    roughness: 0.5,
+    metalness: 0.1
+  });
+
   const mesh = new THREE.InstancedMesh(geometry, material, data.length);
+  mesh.castShadow = true; // Buildings cast shadows
+  mesh.receiveShadow = true; // Buildings receive shadows from others
+  mesh.frustumCulled = false;
 
   const dummy = new THREE.Object3D();
 
@@ -61,10 +98,18 @@ function createCity(data) {
 // 5. Controls & Animation
 const controls = new MapControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.target.set(-100, 0, 200);
+camera.position.set(500, 400, 400);
 
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  dirLight.position.x = camera.position.x + 100;
+  dirLight.position.z = camera.position.z + 100;
+
+  // You also need to move the shadow target to match
+  dirLight.target.position.set(camera.position.x, 0, camera.position.z);
+  dirLight.target.updateMatrixWorld();
   renderer.render(scene, camera);
 }
 

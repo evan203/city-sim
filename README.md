@@ -7,3 +7,9 @@ Map Madison interactively in 3D, and simulate building transit lines.
 ```bash
 npx vite
 ```
+
+#### Process Mapping Data
+
+```bash
+npm run gen-map
+```
