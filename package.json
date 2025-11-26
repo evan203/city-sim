@@ -1,0 +1,17 @@
+{
+  "name": "gp",
+  "version": "1.0.0",
+  "description": "Map Madison interactively in 3D, and simulate building transit lines.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "three": "^0.181.2",
+    "vite": "^7.2.4"
+  }
+}
