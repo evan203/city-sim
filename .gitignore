@@ -4,4 +4,4 @@ __pycache__
 .DS_Store
 dist
 *.log
-data-pipeline/.cache
+data-pipeline/cache
