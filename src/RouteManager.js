@@ -9,16 +9,15 @@ export class RouteManager {
 
     // -- State --
     this.currentRouteNodes = [];
-    this.savedRoutes = []; // { nodes: [], length: number, mesh: THREE.Mesh }
+    this.savedRoutes = [];
 
     // -- Visuals --
-    this.markers = []; // Draggable spheres
-    this.currentPathMesh = null; // The tube being edited
+    this.markers = [];
+    this.currentPathMesh = null;
 
     this.ROAD_OFFSET = 2.5;
 
-    // -- Callbacks --
-    this.onRouteChanged = null; // function(lengthInMeters)
+    this.onRouteChanged = null;
   }
 
   initGraph(data) {
@@ -36,20 +35,25 @@ export class RouteManager {
 
       if (!this.graphData.adjacency[edge.u]) this.graphData.adjacency[edge.u] = [];
       this.graphData.adjacency[edge.u].push({
-        to: edge.v, cost: edge.length || 1, edgeIndex: index
+        to: edge.v,
+        cost: edge.length || 1, // Fallback if length missing
+        edgeIndex: index
       });
 
       if (!edge.oneway) {
         if (!this.graphData.adjacency[edge.v]) this.graphData.adjacency[edge.v] = [];
         this.graphData.adjacency[edge.v].push({
-          to: edge.u, cost: edge.length || 1, edgeIndex: index, isReverse: true
+          to: edge.u,
+          cost: edge.length || 1,
+          edgeIndex: index,
+          isReverse: true
         });
       }
     });
   }
 
   // ============================
-  // API Methods (For UI/Input)
+  // API Methods
   // ============================
 
   addNodeByWorldPosition(vector3) {
@@ -88,58 +92,69 @@ export class RouteManager {
   saveCurrentRoute() {
     if (this.currentRouteNodes.length < 2 || !this.currentPathMesh) return;
 
-    // 1. Calculate final length
     const totalLength = this.currentPathMesh.userData.length || 0;
 
-    // 2. Freeze the mesh (Change color to indicate saved state)
-    this.currentPathMesh.material.color.setHex(0x10B981); // Emerald Green
+    // Freeze mesh color
+    this.currentPathMesh.material.color.setHex(0x10B981);
 
-    // 3. Store in saved list
     this.savedRoutes.push({
       nodes: [...this.currentRouteNodes],
       length: totalLength,
       mesh: this.currentPathMesh
     });
 
-    // 4. Detach mesh from "current" reference so we don't delete it on reset
     this.currentPathMesh = null;
-
-    // 5. Clear drafting state (remove markers, clear node list)
     this.resetDraftingState();
   }
 
-  clearCurrentRoute() {
-    // 1. Remove current mesh from scene
-    if (this.currentPathMesh) {
-      this.scene.remove(this.currentPathMesh);
-      this.currentPathMesh.geometry.dispose();
-      this.currentPathMesh = null;
-    }
-    // 2. Reset state
-    this.resetDraftingState();
-  }
-
-  resetDraftingState() {
-    this.currentRouteNodes = [];
-    // Remove all markers
-    this.markers.forEach(m => this.scene.remove(m));
-    this.markers = [];
-
-    // Notify UI
-    if (this.onRouteChanged) this.onRouteChanged(0);
-  }
-
-  deleteSavedRoute(index) {
+  editSavedRoute(index) {
     if (index < 0 || index >= this.savedRoutes.length) return;
+
+    // 1. If we are currently drafting, discard it (or save it automatically? let's discard for simplicity)
+    this.clearCurrentRoute();
 
     const route = this.savedRoutes[index];
 
-    // Remove mesh from scene
+    // 2. Load nodes
+    this.currentRouteNodes = [...route.nodes];
+
+    // 3. Remove the saved mesh from scene (we will redraw it as active)
     if (route.mesh) {
       this.scene.remove(route.mesh);
       route.mesh.geometry.dispose();
     }
 
+    // 4. Remove from saved list
+    this.savedRoutes.splice(index, 1);
+
+    // 5. Restore Visuals (Markers & Path)
+    this.currentRouteNodes.forEach(nodeId => this.addMarkerVisual(nodeId));
+    this.updatePathVisuals();
+  }
+
+  clearCurrentRoute() {
+    if (this.currentPathMesh) {
+      this.scene.remove(this.currentPathMesh);
+      this.currentPathMesh.geometry.dispose();
+      this.currentPathMesh = null;
+    }
+    this.resetDraftingState();
+  }
+
+  resetDraftingState() {
+    this.currentRouteNodes = [];
+    this.markers.forEach(m => this.scene.remove(m));
+    this.markers = [];
+    if (this.onRouteChanged) this.onRouteChanged(0);
+  }
+
+  deleteSavedRoute(index) {
+    if (index < 0 || index >= this.savedRoutes.length) return;
+    const route = this.savedRoutes[index];
+    if (route.mesh) {
+      this.scene.remove(route.mesh);
+      route.mesh.geometry.dispose();
+    }
     this.savedRoutes.splice(index, 1);
   }
 
@@ -152,7 +167,7 @@ export class RouteManager {
   // ============================
 
   updatePathVisuals() {
-    // Needs 2+ nodes
+    // Need 2+ nodes
     if (this.currentRouteNodes.length < 2) {
       if (this.currentPathMesh) {
         this.scene.remove(this.currentPathMesh);
@@ -163,7 +178,7 @@ export class RouteManager {
     }
 
     let fullPathPoints = [];
-    let totalDist = 0;
+    let totalDist = 0; // Reset Distance
 
     for (let i = 0; i < this.currentRouteNodes.length - 1; i++) {
       const start = this.currentRouteNodes[i];
@@ -174,7 +189,16 @@ export class RouteManager {
       if (!segmentEdges) continue;
 
       segmentEdges.forEach(step => {
-        totalDist += step.edgeData.cost || 0; // Accumulate distance
+        // --- FIX: Accumulate Distance ---
+        // If Python didn't send 'length', calculate Euclidean
+        let dist = step.edgeData.length;
+        if (!dist) {
+          const p1 = step.edgeData.points[0];
+          const p2 = step.edgeData.points[step.edgeData.points.length - 1];
+          dist = Math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2);
+        }
+        totalDist += dist;
+        // --------------------------------
 
         const rawPoints = step.edgeData.points;
         let segmentPoints = rawPoints.map(p => new THREE.Vector2(p[0], p[1]));
@@ -185,7 +209,6 @@ export class RouteManager {
       });
     }
 
-    // Update Mesh
     if (this.currentPathMesh) {
       this.scene.remove(this.currentPathMesh);
       this.currentPathMesh.geometry.dispose();
@@ -198,23 +221,19 @@ export class RouteManager {
     const tubeMat = new THREE.MeshBasicMaterial({ color: this.settings.colors.route });
 
     this.currentPathMesh = new THREE.Mesh(tubeGeom, tubeMat);
-    // Store length on the mesh for easy access later
     this.currentPathMesh.userData.length = totalDist;
 
     this.scene.add(this.currentPathMesh);
-
-    // Update markers color (First=Green, Last=Red, Others=Yellow)
     this.updateMarkerColors();
 
-    // Trigger Callback
     if (this.onRouteChanged) this.onRouteChanged(totalDist);
   }
 
   updateMarkerColors() {
     this.markers.forEach((marker, i) => {
-      let color = 0xFFFF00; // Default Yellow (Waypoint)
-      if (i === 0) color = this.settings.colors.pathStart; // Green
-      else if (i === this.markers.length - 1) color = this.settings.colors.pathEnd; // Red
+      let color = 0xFFFF00; // Yellow
+      if (i === 0) color = this.settings.colors.pathStart;
+      else if (i === this.markers.length - 1) color = this.settings.colors.pathEnd;
       marker.material.color.setHex(color);
     });
   }
@@ -230,12 +249,11 @@ export class RouteManager {
 
     this.scene.add(mesh);
     this.markers.push(mesh);
-
     this.updateMarkerColors();
   }
 
   // ============================
-  // Algorithms (A* & Helpers)
+  // Algorithms
   // ============================
 
   findNearestNode(x, z) {

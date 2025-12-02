@@ -214,6 +214,7 @@ for u, v, k in G.edges(keys=True):
             "v": int(v),
             "oneway": bool(row.get("oneway", False)),
             "points": parse_line_points(row.geometry, center_x, center_y),
+            "length": round(float(row.geometry.length), 2),
         }
     )
 
