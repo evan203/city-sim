@@ -3,10 +3,10 @@ import json
 import os
 import networkx as nx
 from shapely.ops import unary_union
-from shapely.geometry import Polygon, MultiPolygon
 from scipy.spatial import cKDTree
 import re
 import numpy as np
+import pandas as pd
 
 # ==========================================
 # 1. Configuration
@@ -41,7 +41,6 @@ JOB_DENSITY_FACTOR = 0.08  # Jobs per m3 (Commercial)
 # 2. Helpers
 # ==========================================
 def get_height(row):
-    """Estimates building height."""
     h = 8.0
     if "height" in row and str(row["height"]).lower() != "nan":
         try:
@@ -63,7 +62,6 @@ def get_height(row):
 
 
 def estimate_road_width(row):
-    """Estimates width with US-unit safety checks."""
     for key in ["width", "width:carriageway", "est_width"]:
         if key in row and str(row[key]) != "nan":
             val_str = str(row[key]).lower()
@@ -96,10 +94,6 @@ def estimate_road_width(row):
 
 
 def classify_building(row, height, area):
-    """
-    Classifies a building as Residential (Pop) or Commercial (Jobs)
-    and estimates the count based on volume.
-    """
     b_type = str(row.get("building", "yes")).lower()
     amenity = str(row.get("amenity", "")).lower()
     office = str(row.get("office", "")).lower()
@@ -107,7 +101,6 @@ def classify_building(row, height, area):
 
     volume = area * height
 
-    # Lists of tags
     residential_tags = [
         "apartments",
         "residential",
@@ -136,9 +129,7 @@ def classify_building(row, height, area):
         or (shop != "nan" and shop != "")
     )
 
-    # Default logic if generic "yes"
     if not is_res and not is_com:
-        # Small buildings likely houses, big generic likely commercial in city center
         if volume > 5000:
             is_com = True
         else:
@@ -152,11 +143,11 @@ def classify_building(row, height, area):
     if is_res:
         pop = round(volume * POP_DENSITY_FACTOR)
         category = "residential"
-        density_score = min(1.0, pop / 500)  # Normalize for color (0-1)
+        density_score = min(1.0, pop / 500)
     elif is_com:
         jobs = round(volume * JOB_DENSITY_FACTOR)
         category = "commercial"
-        density_score = min(1.0, jobs / 1000)  # Normalize for color (0-1)
+        density_score = min(1.0, jobs / 1000)
 
     return category, density_score, pop, jobs
 
@@ -201,12 +192,32 @@ def parse_line_points(geom, center_x, center_y):
 # ==========================================
 print(f"1. Downloading Data for: {PLACE_NAME}...")
 
+# Define valid tags lists for filtering later
+PARK_TAGS_LEISURE = [
+    "park",
+    "garden",
+    "playground",
+    "golf_course",
+    "pitch",
+    "recreation_ground",
+]
+PARK_TAGS_LANDUSE = [
+    "grass",
+    "forest",
+    "park",
+    "meadow",
+    "village_green",
+    "recreation_ground",
+    "orchard",
+]
+NATURAL_TAGS = ["water", "bay", "coastline"]
+
 tags_visual = {
     "building": True,
-    "natural": ["water", "bay"],
-    "leisure": ["park", "garden"],
-    "landuse": ["grass", "forest", "park"],
-    "amenity": True,  # Fetch amenities to help classify jobs
+    "natural": NATURAL_TAGS,
+    "leisure": PARK_TAGS_LEISURE,
+    "landuse": PARK_TAGS_LANDUSE,
+    "amenity": True,  # Needed for zoning, but MUST be filtered out of geometry
     "office": True,
     "shop": True,
 }
@@ -228,23 +239,26 @@ center_y = gdf_visual.geometry.centroid.y.mean()
 output_visual = {"buildings": [], "water": [], "parks": [], "roads": []}
 output_routing = {"nodes": {}, "edges": []}
 
-# We will store building data to map it to graph nodes later
-building_data_points = []  # (x, y, pop, jobs)
+building_data_points = []
 
 print("3. Processing Visual Layers & Census Simulation...")
+
 for idx, row in gdf_visual.iterrows():
+    # Only process polygons
+    if row.geometry.geom_type not in ["Polygon", "MultiPolygon"]:
+        continue
+
     polygons = parse_geometry(row.geometry, center_x, center_y)
 
     for poly_data in polygons:
-        # 1. Buildings (With Zoning Logic)
+        # -----------------------------
+        # 1. BUILDINGS
+        # -----------------------------
         if "building" in row and str(row["building"]) != "nan":
             height = get_height(row)
             area = row.geometry.area
-
-            # Zoning / Census Simulation
             cat, score, pop, jobs = classify_building(row, height, area)
 
-            # Store centroid for graph mapping
             cx = row.geometry.centroid.x - center_x
             cy = row.geometry.centroid.y - center_y
             building_data_points.append([cx, cy, pop, jobs])
@@ -257,15 +271,28 @@ for idx, row in gdf_visual.iterrows():
                 }
             )
 
-        # 2. Water
-        elif ("natural" in row and str(row["natural"]) != "nan") or (
+        # -----------------------------
+        # 2. WATER
+        # -----------------------------
+        elif ("natural" in row and str(row["natural"]) in NATURAL_TAGS) or (
             "water" in row and str(row["water"]) != "nan"
         ):
             output_visual["water"].append({"shape": poly_data})
 
-        # 3. Parks
-        else:
+        # -----------------------------
+        # 3. PARKS (STRICT FILTER)
+        # -----------------------------
+        elif ("leisure" in row and str(row["leisure"]) in PARK_TAGS_LEISURE) or (
+            "landuse" in row and str(row["landuse"]) in PARK_TAGS_LANDUSE
+        ):
             output_visual["parks"].append({"shape": poly_data})
+
+        # -----------------------------
+        # 4. IGNORE EVERYTHING ELSE
+        # -----------------------------
+        # Amenities, parking lots, and landuse=commercial fall here and are NOT drawn.
+        else:
+            pass
 
 print("   Buffering roads...")
 road_polys = []
@@ -281,21 +308,18 @@ if road_polys:
         output_visual["roads"].append({"shape": shape})
 
 print("4. Mapping Census Data to Graph Nodes...")
-# Create a KDTree of building centroids
 if building_data_points:
     b_coords = np.array([[b[0], b[1]] for b in building_data_points])
-    b_data = np.array([[b[2], b[3]] for b in building_data_points])  # pop, jobs
+    b_data = np.array([[b[2], b[3]] for b in building_data_points])
     tree = cKDTree(b_coords)
 
 for node_id, row in gdf_nodes.iterrows():
     nx = row.geometry.x - center_x
     ny = row.geometry.y - center_y
 
-    # Find all buildings within 100m of this node
     if building_data_points:
         indices = tree.query_ball_point([nx, ny], r=100)
         if indices:
-            # Sum pop/jobs of nearby buildings
             nearby_stats = np.sum(b_data[indices], axis=0)
             node_pop = int(nearby_stats[0])
             node_jobs = int(nearby_stats[1])
@@ -307,7 +331,7 @@ for node_id, row in gdf_nodes.iterrows():
     output_routing["nodes"][int(node_id)] = {
         "x": round(nx, 2),
         "y": round(ny, 2),
-        "pop": node_pop,  # Store for gameplay later
+        "pop": node_pop,
         "jobs": node_jobs,
     }
 

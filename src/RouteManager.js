@@ -18,7 +18,13 @@ export class RouteManager {
     this.ROAD_OFFSET = 2.5;
 
     this.onRouteChanged = null;
+    this.gameManager = null;
   }
+
+  setGameManager(gm) {
+    this.gameManager = gm;
+  }
+
 
   initGraph(data) {
     this.graphData = data;
@@ -52,6 +58,31 @@ export class RouteManager {
     });
   }
 
+  calculateRidership(nodeList) {
+    if (!this.graphData || nodeList.length < 2) return 0;
+
+    let totalPop = 0;
+    let totalJobs = 0;
+
+    // Sum census data for all nodes traversed by the route
+    nodeList.forEach(nodeId => {
+      const node = this.graphData.nodes[nodeId];
+      if (node) {
+        totalPop += (node.pop || 0);
+        totalJobs += (node.jobs || 0);
+      }
+    });
+
+    const synergy = Math.min(totalPop, totalJobs);
+
+    // Efficiency Factor: How balanced is the route?
+    // + Base multiplier (arbitrary game balance constant)
+    const GAME_BALANCE_MULTIPLIER = 5.0;
+
+
+    return Math.floor(synergy * GAME_BALANCE_MULTIPLIER);
+  }
+
   // ============================
   // API Methods
   // ============================
@@ -60,12 +91,7 @@ export class RouteManager {
     if (!this.graphData) return;
     const nodeId = this.findNearestNode(vector3.x, vector3.z);
     if (nodeId === null) return;
-
-    if (this.currentRouteNodes.length > 0 &&
-      this.currentRouteNodes[this.currentRouteNodes.length - 1] === nodeId) {
-      return;
-    }
-
+    if (this.currentRouteNodes.length > 0 && this.currentRouteNodes[this.currentRouteNodes.length - 1] === nodeId) return;
     this.currentRouteNodes.push(nodeId);
     this.addMarkerVisual(nodeId);
     this.updatePathVisuals();
@@ -75,69 +101,64 @@ export class RouteManager {
     if (!this.graphData) return;
     const index = this.markers.indexOf(markerObject);
     if (index === -1) return;
-
     const newNodeId = this.findNearestNode(worldPoint.x, worldPoint.z);
-
     if (this.currentRouteNodes[index] !== newNodeId) {
       this.currentRouteNodes[index] = newNodeId;
-
       const nodeData = this.graphData.nodes[newNodeId];
       markerObject.position.set(nodeData.x, 2, nodeData.y);
       markerObject.userData.nodeId = newNodeId;
-
       this.updatePathVisuals();
     }
   }
 
+
   saveCurrentRoute() {
     if (this.currentRouteNodes.length < 2 || !this.currentPathMesh) return;
 
-    const totalLength = this.currentPathMesh.userData.length || 0;
+    const length = this.currentPathMesh.userData.length || 0;
+    const cost = this.gameManager.getProjectedCost(length);
 
-    // Freeze mesh color
+    // 1. Check Funds
+    if (!this.gameManager.canAfford(cost)) {
+      alert("Insufficient Funds!");
+      return;
+    }
+
+    // 2. Pay
+    this.gameManager.deductFunds(cost);
+
+    // 3. Freeze & Save
     this.currentPathMesh.material.color.setHex(0x10B981);
+
+    const ridership = this.calculateRidership(this.currentRouteNodes);
 
     this.savedRoutes.push({
       nodes: [...this.currentRouteNodes],
-      length: totalLength,
+      stats: { length, cost, ridership },
       mesh: this.currentPathMesh
     });
 
     this.currentPathMesh = null;
     this.resetDraftingState();
+
+    // Force UI update to show new total riders
+    this.gameManager.updateUI();
   }
 
   editSavedRoute(index) {
     if (index < 0 || index >= this.savedRoutes.length) return;
-
-    // 1. If we are currently drafting, discard it (or save it automatically? let's discard for simplicity)
     this.clearCurrentRoute();
-
     const route = this.savedRoutes[index];
-
-    // 2. Load nodes
     this.currentRouteNodes = [...route.nodes];
-
-    // 3. Remove the saved mesh from scene (we will redraw it as active)
-    if (route.mesh) {
-      this.scene.remove(route.mesh);
-      route.mesh.geometry.dispose();
-    }
-
-    // 4. Remove from saved list
+    if (route.mesh) { this.scene.remove(route.mesh); route.mesh.geometry.dispose(); }
     this.savedRoutes.splice(index, 1);
-
-    // 5. Restore Visuals (Markers & Path)
     this.currentRouteNodes.forEach(nodeId => this.addMarkerVisual(nodeId));
     this.updatePathVisuals();
+    this.gameManager.updateUI(); // Update UI since we removed a route (income drops)
   }
 
   clearCurrentRoute() {
-    if (this.currentPathMesh) {
-      this.scene.remove(this.currentPathMesh);
-      this.currentPathMesh.geometry.dispose();
-      this.currentPathMesh = null;
-    }
+    if (this.currentPathMesh) { this.scene.remove(this.currentPathMesh); this.currentPathMesh.geometry.dispose(); this.currentPathMesh = null; }
     this.resetDraftingState();
   }
 
@@ -145,52 +166,45 @@ export class RouteManager {
     this.currentRouteNodes = [];
     this.markers.forEach(m => this.scene.remove(m));
     this.markers = [];
-    if (this.onRouteChanged) this.onRouteChanged(0);
+    if (this.onRouteChanged) this.onRouteChanged({ length: 0, cost: 0, ridership: 0 });
   }
 
   deleteSavedRoute(index) {
     if (index < 0 || index >= this.savedRoutes.length) return;
     const route = this.savedRoutes[index];
-    if (route.mesh) {
-      this.scene.remove(route.mesh);
-      route.mesh.geometry.dispose();
-    }
+    if (route.mesh) { this.scene.remove(route.mesh); route.mesh.geometry.dispose(); }
     this.savedRoutes.splice(index, 1);
+    this.gameManager.updateUI();
   }
 
-  getSavedRoutes() {
-    return this.savedRoutes;
-  }
+  getSavedRoutes() { return this.savedRoutes; }
 
   // ============================
   // Visuals & Logic
   // ============================
 
   updatePathVisuals() {
-    // Need 2+ nodes
     if (this.currentRouteNodes.length < 2) {
       if (this.currentPathMesh) {
         this.scene.remove(this.currentPathMesh);
         this.currentPathMesh = null;
       }
-      if (this.onRouteChanged) this.onRouteChanged(0);
+      // Report 0 stats
+      if (this.onRouteChanged) this.onRouteChanged({ length: 0, cost: 0, ridership: 0 });
       return;
     }
 
     let fullPathPoints = [];
-    let totalDist = 0; // Reset Distance
+    let totalDist = 0;
 
     for (let i = 0; i < this.currentRouteNodes.length - 1; i++) {
       const start = this.currentRouteNodes[i];
       const end = this.currentRouteNodes[i + 1];
-
       const segmentEdges = this.computePathAStar(start, end);
 
       if (!segmentEdges) continue;
 
       segmentEdges.forEach(step => {
-        // --- FIX: Accumulate Distance ---
-        // If Python didn't send 'length', calculate Euclidean
         let dist = step.edgeData.length;
         if (!dist) {
           const p1 = step.edgeData.points[0];
@@ -198,7 +212,6 @@ export class RouteManager {
           dist = Math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2);
         }
         totalDist += dist;
-        // --------------------------------
 
         const rawPoints = step.edgeData.points;
         let segmentPoints = rawPoints.map(p => new THREE.Vector2(p[0], p[1]));
@@ -209,6 +222,7 @@ export class RouteManager {
       });
     }
 
+    // Rebuild Mesh
     if (this.currentPathMesh) {
       this.scene.remove(this.currentPathMesh);
       this.currentPathMesh.geometry.dispose();
@@ -222,11 +236,21 @@ export class RouteManager {
 
     this.currentPathMesh = new THREE.Mesh(tubeGeom, tubeMat);
     this.currentPathMesh.userData.length = totalDist;
-
     this.scene.add(this.currentPathMesh);
+
     this.updateMarkerColors();
 
-    if (this.onRouteChanged) this.onRouteChanged(totalDist);
+    // -- CALCULATE LIVE GAMEPLAY STATS --
+    const projectedRiders = this.calculateRidership(this.currentRouteNodes);
+    const projectedCost = this.gameManager ? this.gameManager.getProjectedCost(totalDist) : 0;
+
+    if (this.onRouteChanged) {
+      this.onRouteChanged({
+        length: totalDist,
+        cost: projectedCost,
+        ridership: projectedRiders
+      });
+    }
   }
 
   updateMarkerColors() {

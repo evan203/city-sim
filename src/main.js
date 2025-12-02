@@ -5,6 +5,7 @@ import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 import { InputManager } from './InputManager.js';
 import { RouteManager } from './RouteManager.js';
 import { UIManager } from './UIManager.js';
+import { GameManager } from './GameManager.js';
 
 
 // ==========================================
@@ -31,44 +32,45 @@ const SETTINGS = {
 };
 
 let scene, camera, renderer, controls;
-let inputManager, routeManager, uiManager;
+let inputManager, routeManager, uiManager, gameManager;
 
 function init() {
   setupScene();
 
-  // 1. Managers
+  // 1. Core Systems
   routeManager = new RouteManager(scene, SETTINGS);
-  inputManager = new InputManager(camera, renderer.domElement, scene, controls);
-  uiManager = new UIManager(routeManager); // Wire UI to Route Logic
+  uiManager = new UIManager(routeManager);
 
-  // 2. Events
+  // 2. Game Logic
+  gameManager = new GameManager(routeManager, uiManager);
+  routeManager.setGameManager(gameManager); // Dependency Injection
+
+  gameManager.start(); // Start the loop
+
+  // 3. Input
+  inputManager = new InputManager(camera, renderer.domElement, scene, controls);
   inputManager.init();
 
+  // Wiring
   inputManager.onClick = (point, object) => {
-    if (object.name === "GROUND") {
-      routeManager.addNodeByWorldPosition(point);
-    }
+    if (object.name === "GROUND") routeManager.addNodeByWorldPosition(point);
   };
-
   inputManager.onDrag = (markerObject, newPoint) => {
     routeManager.dragNode(markerObject, newPoint);
   };
 
-  // Wire RouteManager back to UI (to update stats when dragging)
-  routeManager.onRouteChanged = (dist) => {
-    uiManager.updateStats(dist);
+  uiManager.onToggleZoning = (isActive) => updateBuildingColors(isActive);
+
+  // When path updates, show new stats in UI
+  routeManager.onRouteChanged = (stats) => {
+    uiManager.updateDraftStats(stats);
   };
 
-  uiManager.onToggleZoning = (isActive) => {
-    updateBuildingColors(isActive);
-  };
-
-  // 3. Data Load
+  // 4. Load Data
   Promise.all([
     fetch(SETTINGS.files.visual).then(r => r.json()),
     fetch(SETTINGS.files.routing).then(r => r.json())
   ]).then(([visual, routing]) => {
-    console.log("Data loaded.");
     renderCity(visual);
     routeManager.initGraph(routing);
   });

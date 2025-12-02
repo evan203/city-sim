@@ -9,33 +9,48 @@
 </head>
 
 <body>
-  <!-- The UI Overlay -->
   <button id="ui-toggle" title="Toggle Menu">☰</button>
+
+  <!-- Floating Income Feedback -->
+  <div id="income-float"
+    style="position:absolute; top:60px; left:220px; color:#10B981; font-weight:bold; font-size:20px; opacity:0; transition: all 1s ease-out; z-index:90; text-shadow:0 1px 2px white;">
+    +$0</div>
 
   <div id="ui-container">
     <div class="header">
       <h2>Route Planner</h2>
-      <p>Left Click: Add Point<br>Drag: Move Point</p>
-      <button id="btn-zoning" class="secondary" style="margin-top:10px; width:100%">Toggle Zoning View</button>
+
+      <!-- Global Stats -->
+      <div
+        style="background:#f3f4f6; padding:8px; border-radius:6px; margin-bottom:10px; display:grid; grid-template-columns: 1fr 1fr; gap:5px; font-size:13px;">
+        <div style="color:#2563EB">Budget: <strong id="val-budget">$1,000,000</strong></div>
+        <div>Day: <strong id="val-day">1</strong></div>
+        <div style="grid-column: span 2; border-top:1px solid #ddd; margin-top:4px; padding-top:4px;">
+          Total Daily Riders: <strong id="val-riders">0</strong>
+        </div>
+      </div>
+
+      <p style="font-size:12px; color:#666; margin-bottom:5px;">Left Click: Add Point | Drag: Move</p>
+      <button id="btn-zoning" class="secondary" style="width:100%">Toggle Zoning View</button>
     </div>
 
     <div class="section">
       <h3>Current Draft</h3>
-      <div class="stat-row">
-        <span>Length:</span>
-        <span id="current-length">0 m</span>
+
+      <div class="stat-row"><span>Length:</span> <span id="current-length">0 m</span></div>
+      <div class="stat-row"><span>Cost:</span> <span id="current-cost" style="color:#ef4444">$0</span></div>
+      <div class="stat-row"><span>Est. Riders:</span> <span id="current-riders" style="color:#10B981">0 / day</span>
       </div>
+
       <div class="button-row">
-        <button id="btn-save" class="primary">Save Route</button>
+        <button id="btn-save" class="primary">Build Route</button>
         <button id="btn-discard" class="danger">Discard</button>
       </div>
     </div>
 
     <div class="section">
-      <h3>Saved Routes</h3>
-      <ul id="route-list">
-        <!-- List items will be injected here -->
-      </ul>
+      <h3>Active Routes</h3>
+      <ul id="route-list"></ul>
     </div>
   </div>
 
