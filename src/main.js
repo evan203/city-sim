@@ -17,6 +17,8 @@ const SETTINGS = {
     ground: 0xDDDDDD,
     zoningRes: new THREE.Color(0xA855F7),
     zoningCom: new THREE.Color(0x3B82F6),
+    coverageGood: new THREE.Color(0x10B981),
+    coverageBad: new THREE.Color(0xEF4444),
     building: new THREE.Color(0xFFFFFF),
     water: 0xAADAFF,
     park: 0xC3E6CB,
@@ -34,7 +36,9 @@ const SETTINGS = {
 let scene, camera, renderer, controls;
 let inputManager, routeManager, uiManager, gameManager, vehicleSystem;
 
-const clock = new THREE.Clock(); // Added Clock
+const clock = new THREE.Clock();
+
+let currentViewMode = 'none'; // 'none', 'zoning', 'approval'
 
 function init() {
   setupScene();
@@ -51,7 +55,6 @@ function init() {
   vehicleSystem = new VehicleSystem(scene);
   routeManager.setVehicleSystem(vehicleSystem); // Inject into RouteManager
 
-
   gameManager.start(); // Start the loop
 
   // 3. Input
@@ -66,11 +69,16 @@ function init() {
     routeManager.dragNode(markerObject, newPoint);
   };
 
-  uiManager.onToggleZoning = (isActive) => updateBuildingColors(isActive);
+  // Wire UI View Mode
+  uiManager.onViewModeChanged = (mode) => {
+    currentViewMode = mode;
+    updateBuildingColors();
+  };
 
-  // When path updates, show new stats in UI
   routeManager.onRouteChanged = (stats) => {
     uiManager.updateDraftStats(stats);
+    // If in coverage view, we might need to refresh colors as coverage changes
+    if (currentViewMode === 'approval') updateBuildingColors();
   };
 
   // 4. Load Data
@@ -78,39 +86,72 @@ function init() {
     fetch(SETTINGS.files.visual).then(r => r.json()),
     fetch(SETTINGS.files.routing).then(r => r.json())
   ]).then(([visual, routing]) => {
-    renderCity(visual);
     routeManager.initGraph(routing);
+    renderCity(visual);
   });
 
   animate();
 }
 
-function updateBuildingColors(showZoning) {
+function updateBuildingColors() {
   scene.traverse((obj) => {
-    // We tagged buildings with userData in renderCity (see below)
     if (obj.name === 'BUILDING_MESH') {
-
-      if (!showZoning) {
-        // Revert to white
-        obj.material.color.setHex(SETTINGS.colors.building.getHex());
-        return;
-      }
-
-      // Get Data
-      const data = obj.userData.cityData; // We need to ensure we save this during creation
+      const data = obj.userData.cityData;
       if (!data) return;
 
-      if (data.type === 'residential') {
-        // Lerp from White to Purple based on density
-        const color = SETTINGS.colors.building.clone();
-        color.lerp(SETTINGS.colors.zoningRes, data.density || 0.5);
-        obj.material.color.copy(color);
+      // 1. STANDARD VIEW
+      if (currentViewMode === 'none') {
+        obj.material.color.copy(SETTINGS.colors.building);
       }
-      else if (data.type === 'commercial') {
-        // Lerp from White to Blue
-        const color = SETTINGS.colors.building.clone();
-        color.lerp(SETTINGS.colors.zoningCom, data.density || 0.5);
-        obj.material.color.copy(color);
+
+      // 2. ZONING VIEW
+      else if (currentViewMode === 'zoning') {
+        if (data.type === 'residential') {
+          const color = SETTINGS.colors.building.clone();
+          color.lerp(SETTINGS.colors.zoningRes, data.density || 0.5);
+          obj.material.color.copy(color);
+        } else if (data.type === 'commercial') {
+          const color = SETTINGS.colors.building.clone();
+          color.lerp(SETTINGS.colors.zoningCom, data.density || 0.5);
+          obj.material.color.copy(color);
+        } else {
+          obj.material.color.copy(SETTINGS.colors.building);
+        }
+      }
+
+      // 3. APPROVAL / COVERAGE VIEW (GRADIENT)
+      else if (currentViewMode === 'approval') {
+        // Get graph node position
+        const nearestId = obj.userData.nearestNodeId;
+        // RouteManager has logic for this
+        const node = routeManager.graphData.nodes[nearestId];
+
+        if (node) {
+          // Calculate distance to nearest transit
+          // node.y is Z in world space
+          const dist = routeManager.getDistanceToNearestTransit(node.x, node.y);
+
+          // Color Logic: 
+          // < 100m = Green (Great)
+          // < 300m = Yellow (Okay)
+          // > 600m = Red (Bad)
+
+          if (dist === Infinity) {
+            obj.material.color.copy(SETTINGS.colors.coverageBad); // Deep Red
+          } else {
+            const MAX_DIST = 600;
+            const factor = Math.min(1.0, dist / MAX_DIST); // 0.0 (Close) to 1.0 (Far)
+
+            // Lerp from Green to Red
+            // (Green at 0, Red at 1)
+            const color = SETTINGS.colors.coverageGood.clone();
+            // We can lerp to Red.
+            // Or use a Yellow midpoint?
+            // Simple lerp: Green -> Red
+            color.lerp(SETTINGS.colors.coverageBad, factor);
+            obj.material.color.copy(color);
+          }
+        }
       }
     }
   });
@@ -219,57 +260,57 @@ function renderCity(data) {
     scene.add(mesh);
   };
 
-  createBuildingLayer(data.buildings);
+  // Dedicated Building Creator to cache Nearest Node ID
+  const createBuildingLayer = (buildings) => {
+    if (!buildings || !buildings.length) return;
 
+    const mat = new THREE.MeshStandardMaterial({
+      color: SETTINGS.colors.building,
+      roughness: 0.6,
+      side: THREE.DoubleSide,
+      shadowSide: THREE.DoubleSide
+    });
+
+    buildings.forEach(b => {
+      const shape = new THREE.Shape();
+      if (b.shape.outer.length < 3) return;
+      shape.moveTo(b.shape.outer[0][0], b.shape.outer[0][1]);
+      for (let i = 1; i < b.shape.outer.length; i++) shape.lineTo(b.shape.outer[i][0], b.shape.outer[i][1]);
+
+      if (b.shape.holes) {
+        b.shape.holes.forEach(h => {
+          const path = new THREE.Path();
+          path.moveTo(h[0][0], h[0][1]);
+          for (let k = 1; k < h.length; k++) path.lineTo(h[k][0], h[k][1]);
+          shape.holes.push(path);
+        });
+      }
+
+      const geom = new THREE.ExtrudeGeometry(shape, { depth: b.height, bevelEnabled: false });
+      geom.rotateX(-Math.PI / 2);
+
+      const mesh = new THREE.Mesh(geom, mat.clone());
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.name = 'BUILDING_MESH';
+      mesh.userData.cityData = b.data;
+
+      // CALCULATE NEAREST NODE FOR APPROVAL MECHANIC
+      // We use the first point of the outer ring as a proxy for position
+      const bx = b.shape.outer[0][0];
+      const by = b.shape.outer[0][1];
+
+      const nearestId = routeManager.findNearestNode(bx, -by);
+      mesh.userData.nearestNodeId = nearestId;
+
+      scene.add(mesh);
+    });
+  };
+
+  createBuildingLayer(data.buildings);
   createLayer(data.water, SETTINGS.colors.water, 0, 0.1, false);
   createLayer(data.parks, SETTINGS.colors.park, 0, 0.2, false);
   createLayer(data.roads, SETTINGS.colors.road, 0, 0.3, false);
-
-}
-
-function createBuildingLayer(buildings) {
-  if (!buildings || !buildings.length) return;
-
-
-  const mat = new THREE.MeshStandardMaterial({
-    color: SETTINGS.colors.building,
-    roughness: 0.6,
-    side: THREE.DoubleSide,
-    shadowSide: THREE.DoubleSide
-
-  });
-
-  buildings.forEach(b => {
-    const shape = new THREE.Shape();
-    if (b.shape.outer.length < 3) return;
-    shape.moveTo(b.shape.outer[0][0], b.shape.outer[0][1]);
-    for (let i = 1; i < b.shape.outer.length; i++) shape.lineTo(b.shape.outer[i][0], b.shape.outer[i][1]);
-
-    if (b.shape.holes) {
-      b.shape.holes.forEach(h => {
-        const path = new THREE.Path();
-        path.moveTo(h[0][0], h[0][1]);
-        for (let k = 1; k < h.length; k++) path.lineTo(h[k][0], h[k][1]);
-        shape.holes.push(path);
-      });
-    }
-
-    const geom = new THREE.ExtrudeGeometry(shape, {
-      depth: b.height,
-      bevelEnabled: false
-    });
-    geom.rotateX(-Math.PI / 2);
-
-    const mesh = new THREE.Mesh(geom, mat.clone());
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-
-    // Store metadata for the Zoning Toggle
-    mesh.name = 'BUILDING_MESH';
-    mesh.userData.cityData = b.data;
-
-    scene.add(mesh);
-  });
 }
 
 

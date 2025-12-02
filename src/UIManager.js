@@ -4,23 +4,26 @@ export class UIManager {
 
     // UI Elements
     this.elCurrentLength = document.getElementById('current-length');
-    this.elCurrentCost = document.getElementById('current-cost');   // NEW
-    this.elCurrentRiders = document.getElementById('current-riders'); // NEW
+    this.elCurrentCost = document.getElementById('current-cost');
+    this.elCurrentRiders = document.getElementById('current-riders');
 
-    this.elBudget = document.getElementById('val-budget'); // NEW
-    this.elDay = document.getElementById('val-day');       // NEW
-    this.elTotalRiders = document.getElementById('val-riders'); // NEW
-    this.elIncomeFloat = document.getElementById('income-float'); // NEW
+    this.elBudget = document.getElementById('val-budget');
+    this.elDay = document.getElementById('val-day');
+    this.elTotalRiders = document.getElementById('val-riders');
+    this.elApproval = document.getElementById('val-approval'); // NEW
 
+    this.elIncomeFloat = document.getElementById('income-float');
     this.elRouteList = document.getElementById('route-list');
     this.elContainer = document.getElementById('ui-container');
 
     this.btnSave = document.getElementById('btn-save');
     this.btnDiscard = document.getElementById('btn-discard');
     this.btnToggle = document.getElementById('ui-toggle');
-    this.btnZoning = document.getElementById('btn-zoning');
 
-    this.onToggleZoning = null;
+    // NEW: View Mode
+    this.selectViewMode = document.getElementById('view-mode');
+
+    this.onViewModeChanged = null;
     this.initListeners();
   }
 
@@ -38,45 +41,43 @@ export class UIManager {
       this.elContainer.classList.toggle('hidden');
     });
 
-    this.btnZoning.addEventListener('click', () => {
-      const isActive = this.btnZoning.classList.toggle('active');
-      this.btnZoning.style.background = isActive ? '#4B5563' : '';
-      this.btnZoning.style.color = isActive ? 'white' : '';
-      if (this.onToggleZoning) this.onToggleZoning(isActive);
+    // Handle Dropdown Change
+    this.selectViewMode.addEventListener('change', (e) => {
+      if (this.onViewModeChanged) {
+        this.onViewModeChanged(e.target.value);
+      }
     });
   }
 
-  // Called by GameManager
   updateGameStats(stats) {
     this.elBudget.textContent = "$" + stats.budget.toLocaleString();
     this.elDay.textContent = stats.day;
     this.elTotalRiders.textContent = stats.totalRiders.toLocaleString();
+
+    // Update Approval
+    this.elApproval.textContent = stats.approval + "%";
+    // Color code it
+    if (stats.approval > 75) this.elApproval.style.color = "#10B981"; // Green
+    else if (stats.approval < 40) this.elApproval.style.color = "#EF4444"; // Red
+    else this.elApproval.style.color = "#D97706"; // Orange
   }
 
   showIncomeFeedback(amount) {
     this.elIncomeFloat.textContent = "+ $" + amount.toLocaleString();
     this.elIncomeFloat.style.opacity = 1;
     this.elIncomeFloat.style.top = "40px";
-
-    // Reset animation
     setTimeout(() => {
       this.elIncomeFloat.style.opacity = 0;
       this.elIncomeFloat.style.top = "60px";
     }, 2000);
   }
 
-  // Called by RouteManager on path change
   updateDraftStats(stats) {
-    // Length
     let lenText = stats.length > 1000
       ? (stats.length / 1000).toFixed(2) + " km"
       : Math.round(stats.length) + " m";
     this.elCurrentLength.textContent = lenText;
-
-    // Cost
     this.elCurrentCost.textContent = "$" + stats.cost.toLocaleString();
-
-    // Ridership
     this.elCurrentRiders.textContent = stats.ridership.toLocaleString() + " / day";
   }
 
@@ -87,7 +88,6 @@ export class UIManager {
     routes.forEach((route, index) => {
       const li = document.createElement('li');
 
-      // Format Length
       let lenStr = route.stats.length > 1000
         ? (route.stats.length / 1000).toFixed(1) + "km"
         : Math.round(route.stats.length) + "m";

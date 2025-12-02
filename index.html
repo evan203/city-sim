@@ -28,10 +28,17 @@
         <div style="grid-column: span 2; border-top:1px solid #ddd; margin-top:4px; padding-top:4px;">
           Total Daily Riders: <strong id="val-riders">0</strong>
         </div>
+        <div style="color:#D97706">Approval: <strong id="val-approval">50%</strong></div>
+
       </div>
 
       <p style="font-size:12px; color:#666; margin-bottom:5px;">Left Click: Add Point | Drag: Move</p>
-      <button id="btn-zoning" class="secondary" style="width:100%">Toggle Zoning View</button>
+      <select id="view-mode"
+        style="width:100%; padding:6px; border-radius:4px; border:1px solid #ccc; background:white; font-size:13px; cursor:pointer;">
+        <option value="none">View: Standard</option>
+        <option value="zoning">View: Zoning Density</option>
+        <option value="approval">View: Transit Coverage</option>
+      </select>
     </div>
 
     <div class="section">

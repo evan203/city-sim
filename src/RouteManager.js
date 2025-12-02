@@ -15,6 +15,10 @@ export class RouteManager {
     this.markers = [];
     this.currentPathMesh = null;
 
+    this.servedNodes = new Set();
+
+    this.servedCoordinates = [];
+
     this.ROAD_OFFSET = 2.5;
 
     this.onRouteChanged = null;
@@ -36,34 +40,64 @@ export class RouteManager {
   initGraph(data) {
     this.graphData = data;
     this.graphData.adjacency = {};
-
-    // 1. Flip Coordinates
     for (let key in this.graphData.nodes) {
       this.graphData.nodes[key].y = -this.graphData.nodes[key].y;
     }
-
-    // 2. Build Adjacency
     this.graphData.edges.forEach((edge, index) => {
       if (edge.points) edge.points.forEach(p => { p[1] = -p[1]; });
-
       if (!this.graphData.adjacency[edge.u]) this.graphData.adjacency[edge.u] = [];
-      this.graphData.adjacency[edge.u].push({
-        to: edge.v,
-        cost: edge.length || 1, // Fallback if length missing
-        edgeIndex: index
-      });
-
+      this.graphData.adjacency[edge.u].push({ to: edge.v, cost: edge.length || 1, edgeIndex: index });
       if (!edge.oneway) {
         if (!this.graphData.adjacency[edge.v]) this.graphData.adjacency[edge.v] = [];
-        this.graphData.adjacency[edge.v].push({
-          to: edge.u,
-          cost: edge.length || 1,
-          edgeIndex: index,
-          isReverse: true
-        });
+        this.graphData.adjacency[edge.v].push({ to: edge.u, cost: edge.length || 1, edgeIndex: index, isReverse: true });
       }
     });
   }
+
+  // Helper to check if a node is covered
+  isNodeServed(nodeId) {
+    return this.servedNodes.has(parseInt(nodeId));
+  }
+
+  // Rebuild the Set of served nodes
+  refreshServedNodes() {
+    this.servedNodes.clear();
+    this.servedCoordinates = [];
+
+    this.savedRoutes.forEach(route => {
+      route.nodes.forEach(nodeId => {
+        if (!this.servedNodes.has(nodeId)) {
+          this.servedNodes.add(nodeId);
+
+          const node = this.graphData.nodes[nodeId];
+          if (node) {
+            // Cache World Coordinates (x, z)
+            // Note: node.y in graphData is already flipped to match World Z
+            this.servedCoordinates.push({ x: node.x, z: node.y });
+          }
+        }
+      });
+    });
+  }
+
+  // Returns distance in meters. Returns Infinity if no routes exist.
+  getDistanceToNearestTransit(x, z) {
+    if (this.servedCoordinates.length === 0) return Infinity;
+
+    let minSq = Infinity;
+
+    // Optimization: Standard loop is faster than forEach for high freq calls
+    for (let i = 0; i < this.servedCoordinates.length; i++) {
+      const sc = this.servedCoordinates[i];
+      const dx = sc.x - x;
+      const dz = sc.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < minSq) minSq = d2;
+    }
+
+    return Math.sqrt(minSq);
+  }
+
 
   calculateRidership(nodeList) {
     if (!this.graphData || nodeList.length < 2) return 0;
@@ -153,6 +187,8 @@ export class RouteManager {
     this.currentPathMesh = null;
     this.resetDraftingState();
 
+    this.refreshServedNodes();
+
     // Force UI update to show new total riders
     this.gameManager.updateUI();
   }
@@ -164,6 +200,9 @@ export class RouteManager {
     this.currentRouteNodes = [...route.nodes];
     if (route.mesh) { this.scene.remove(route.mesh); route.mesh.geometry.dispose(); }
     this.savedRoutes.splice(index, 1);
+
+    this.refreshServedNodes();
+
     this.currentRouteNodes.forEach(nodeId => this.addMarkerVisual(nodeId));
     this.updatePathVisuals();
     this.gameManager.updateUI(); // Update UI since we removed a route (income drops)
@@ -186,6 +225,7 @@ export class RouteManager {
     const route = this.savedRoutes[index];
     if (route.mesh) { this.scene.remove(route.mesh); route.mesh.geometry.dispose(); }
     this.savedRoutes.splice(index, 1);
+    this.refreshServedNodes();
     this.gameManager.updateUI();
   }
 
