@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 
-// Import our new Phase 1 Managers
+// Import our Classes
 import { InputManager } from './InputManager.js';
 import { RouteManager } from './RouteManager.js';
 
@@ -33,32 +33,36 @@ let inputManager, routeManager;
 function init() {
   setupScene();
 
-  // -- PHASE 1 INITIALIZATION --
-  // Initialize Managers
-  inputManager = new InputManager(camera, renderer.domElement, scene);
+  // -- INITIALIZATION --
+  // 1. Create Route Manager
   routeManager = new RouteManager(scene, SETTINGS);
 
-  // Wire up Input to Route Logic
+  // 2. Create Input Manager (Pass controls so we can disable them during drag)
+  inputManager = new InputManager(camera, renderer.domElement, scene, controls);
   inputManager.init();
+
+  // 3. Wire Events
+
+  // Handle Click (Add Node)
   inputManager.onClick = (point, object) => {
-    // If we clicked the ground, we add a node to the route
     if (object.name === "GROUND") {
       routeManager.addNodeByWorldPosition(point);
     }
-    // If we clicked a marker, we could eventually select it for dragging (Phase 3)
-    else if (object.userData.isMarker) {
-      console.log("Clicked Marker:", object.userData.nodeId);
-    }
   };
 
-  // Load Data
+  // Handle Drag (Move Node)
+  inputManager.onDrag = (markerObject, newPoint) => {
+    routeManager.dragNode(markerObject, newPoint);
+  };
+
+  // 4. Load Data
   Promise.all([
     fetch(SETTINGS.files.visual).then(r => r.json()),
     fetch(SETTINGS.files.routing).then(r => r.json())
   ]).then(([visual, routing]) => {
     console.log("Data loaded.");
     renderCity(visual);
-    routeManager.initGraph(routing); // Pass data to RouteManager
+    routeManager.initGraph(routing);
   });
 
   animate();
@@ -80,9 +84,9 @@ function setupScene() {
   renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
-  // Lights
   const ambient = new THREE.HemisphereLight(0xffffff, 0x555555, 0.7);
   scene.add(ambient);
+
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
   dirLight.position.set(500, 1000, 500);
   dirLight.castShadow = true;
@@ -93,7 +97,6 @@ function setupScene() {
   dirLight.shadow.camera.bottom = -1500;
   scene.add(dirLight);
 
-  // Ground Plane
   const plane = new THREE.Mesh(
     new THREE.PlaneGeometry(10000, 10000),
     new THREE.MeshLambertMaterial({ color: SETTINGS.colors.ground })
@@ -104,7 +107,6 @@ function setupScene() {
   plane.receiveShadow = true;
   scene.add(plane);
 
-  // Controls
   controls = new MapControls(camera, renderer.domElement);
   controls.dampingFactor = 0.05;
   controls.enableDamping = true;
@@ -118,10 +120,9 @@ function setupScene() {
 }
 
 // ==========================================
-// 3. Visual Rendering (Static City)
+// 3. Visual Rendering
 // ==========================================
 function renderCity(data) {
-  // This logic is unchanged from before, just strictly for static geometry
   const createLayer = (items, color, height, lift, isExtruded) => {
     if (!items || !items.length) return;
     const geometries = [];
