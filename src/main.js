@@ -6,7 +6,7 @@ import { InputManager } from './InputManager.js';
 import { RouteManager } from './RouteManager.js';
 import { UIManager } from './UIManager.js';
 import { GameManager } from './GameManager.js';
-
+import { VehicleSystem } from './VehicleSystem.js';
 
 // ==========================================
 // 1. Configuration
@@ -32,7 +32,9 @@ const SETTINGS = {
 };
 
 let scene, camera, renderer, controls;
-let inputManager, routeManager, uiManager, gameManager;
+let inputManager, routeManager, uiManager, gameManager, vehicleSystem;
+
+const clock = new THREE.Clock(); // Added Clock
 
 function init() {
   setupScene();
@@ -44,6 +46,11 @@ function init() {
   // 2. Game Logic
   gameManager = new GameManager(routeManager, uiManager);
   routeManager.setGameManager(gameManager); // Dependency Injection
+
+  // Vehicle System
+  vehicleSystem = new VehicleSystem(scene);
+  routeManager.setVehicleSystem(vehicleSystem); // Inject into RouteManager
+
 
   gameManager.start(); // Start the loop
 
@@ -268,7 +275,13 @@ function createBuildingLayer(buildings) {
 
 function animate() {
   requestAnimationFrame(animate);
+  const delta = clock.getDelta(); // Get time since last frame
+
   controls.update();
+  if (vehicleSystem) {
+    vehicleSystem.update(delta);
+  }
+
   renderer.render(scene, camera);
 }
 

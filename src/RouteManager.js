@@ -19,6 +19,13 @@ export class RouteManager {
 
     this.onRouteChanged = null;
     this.gameManager = null;
+
+    this.vehicleSystem = null;
+    this.latestPathPoints = [];
+  }
+
+  setVehicleSystem(vs) {
+    this.vehicleSystem = vs;
   }
 
   setGameManager(gm) {
@@ -127,6 +134,11 @@ export class RouteManager {
     // 2. Pay
     this.gameManager.deductFunds(cost);
 
+    // Spawn bus
+    if (this.vehicleSystem && this.latestPathPoints.length > 0) {
+      this.vehicleSystem.addBusToRoute(this.latestPathPoints);
+    }
+
     // 3. Freeze & Save
     this.currentPathMesh.material.color.setHex(0x10B981);
 
@@ -221,6 +233,8 @@ export class RouteManager {
         offsetSegment.forEach(p => fullPathPoints.push(new THREE.Vector3(p.x, 0.5, p.y)));
       });
     }
+
+    this.latestPathPoints = fullPathPoints;
 
     // Rebuild Mesh
     if (this.currentPathMesh) {
