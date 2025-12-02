@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 
+// Import our new Phase 1 Managers
+import { InputManager } from './InputManager.js';
+import { RouteManager } from './RouteManager.js';
+
 // ==========================================
 // 1. Configuration
 // ==========================================
@@ -23,77 +27,45 @@ const SETTINGS = {
   }
 };
 
-let scene, camera, renderer, controls, raycaster;
-let mouse = new THREE.Vector2();
-let routingData = null;
-let cityData = null;
-
-// Interaction State
-let startNode = null;
-let endNode = null;
-let markers = { start: null, end: null, pathMesh: null };
+let scene, camera, renderer, controls;
+let inputManager, routeManager;
 
 function init() {
   setupScene();
-  setupInteractions();
 
+  // -- PHASE 1 INITIALIZATION --
+  // Initialize Managers
+  inputManager = new InputManager(camera, renderer.domElement, scene);
+  routeManager = new RouteManager(scene, SETTINGS);
+
+  // Wire up Input to Route Logic
+  inputManager.init();
+  inputManager.onClick = (point, object) => {
+    // If we clicked the ground, we add a node to the route
+    if (object.name === "GROUND") {
+      routeManager.addNodeByWorldPosition(point);
+    }
+    // If we clicked a marker, we could eventually select it for dragging (Phase 3)
+    else if (object.userData.isMarker) {
+      console.log("Clicked Marker:", object.userData.nodeId);
+    }
+  };
+
+  // Load Data
   Promise.all([
     fetch(SETTINGS.files.visual).then(r => r.json()),
     fetch(SETTINGS.files.routing).then(r => r.json())
   ]).then(([visual, routing]) => {
-    cityData = visual;
-    routingData = routing;
-
-    renderCity(cityData);
-    prepareGraph(routingData); // This now fixes the coordinates!
+    console.log("Data loaded.");
+    renderCity(visual);
+    routeManager.initGraph(routing); // Pass data to RouteManager
   });
 
   animate();
 }
 
 // ==========================================
-// 2. Data Preparation & Coordinate Fix
-// ==========================================
-function prepareGraph(data) {
-  // We must FLIP the Y coordinate of the graph data to -Z
-  // because our visual map is rotated -90deg on the X axis.
-
-  data.adjacency = {};
-
-  // 1. Fix Nodes
-  for (let key in data.nodes) {
-    data.nodes[key].y = -data.nodes[key].y; // FLIP Y to Negative
-  }
-
-  // 2. Fix Edges
-  data.edges.forEach((edge, index) => {
-    // Flip geometry points
-    if (edge.points) {
-      edge.points.forEach(p => { p[1] = -p[1]; });
-    }
-
-    // Build Adjacency List
-    if (!data.adjacency[edge.u]) data.adjacency[edge.u] = [];
-    data.adjacency[edge.u].push({
-      to: edge.v,
-      cost: edge.length || 1,
-      edgeIndex: index
-    });
-
-    if (!edge.oneway) {
-      if (!data.adjacency[edge.v]) data.adjacency[edge.v] = [];
-      data.adjacency[edge.v].push({
-        to: edge.u,
-        cost: edge.length || 1,
-        edgeIndex: index,
-        isReverse: true
-      });
-    }
-  });
-}
-
-// ==========================================
-// 3. Scene Setup
+// 2. Scene Setup
 // ==========================================
 function setupScene() {
   scene = new THREE.Scene();
@@ -108,9 +80,9 @@ function setupScene() {
   renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
+  // Lights
   const ambient = new THREE.HemisphereLight(0xffffff, 0x555555, 0.7);
   scene.add(ambient);
-
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
   dirLight.position.set(500, 1000, 500);
   dirLight.castShadow = true;
@@ -121,6 +93,7 @@ function setupScene() {
   dirLight.shadow.camera.bottom = -1500;
   scene.add(dirLight);
 
+  // Ground Plane
   const plane = new THREE.Mesh(
     new THREE.PlaneGeometry(10000, 10000),
     new THREE.MeshLambertMaterial({ color: SETTINGS.colors.ground })
@@ -131,43 +104,24 @@ function setupScene() {
   plane.receiveShadow = true;
   scene.add(plane);
 
+  // Controls
   controls = new MapControls(camera, renderer.domElement);
   controls.dampingFactor = 0.05;
   controls.enableDamping = true;
   controls.maxPolarAngle = Math.PI / 2 - 0.1;
 
-  raycaster = new THREE.Raycaster();
-}
-
-function setupInteractions() {
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
-
-  window.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
-
-    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-    raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(scene.children);
-    const hit = intersects.find(obj => obj.object.name === "GROUND");
-
-    if (hit && routingData) {
-      // Pass the Hit Point (X, Z) directly. 
-      // Z corresponds to our flipped Y in the graph.
-      handleMapClick(hit.point.x, hit.point.z);
-    }
-  });
 }
 
 // ==========================================
-// 4. Visual Rendering
+// 3. Visual Rendering (Static City)
 // ==========================================
 function renderCity(data) {
+  // This logic is unchanged from before, just strictly for static geometry
   const createLayer = (items, color, height, lift, isExtruded) => {
     if (!items || !items.length) return;
     const geometries = [];
@@ -215,157 +169,6 @@ function renderCity(data) {
   createLayer(data.parks, SETTINGS.colors.park, 0, 0.2, false);
   createLayer(data.roads, SETTINGS.colors.road, 0, 0.3, false);
   createLayer(data.buildings, SETTINGS.colors.building, 10, 0, true);
-}
-
-// ==========================================
-// 5. Routing Logic (A*)
-// ==========================================
-function handleMapClick(x, z) {
-  const nearestId = findNearestNode(x, z);
-
-  if (!startNode) {
-    startNode = nearestId;
-    placeMarker('start', routingData.nodes[nearestId], SETTINGS.colors.pathStart);
-    if (markers.end) { scene.remove(markers.end); markers.end = null; }
-    if (markers.pathMesh) { scene.remove(markers.pathMesh); markers.pathMesh = null; }
-    endNode = null;
-  } else {
-    endNode = nearestId;
-    placeMarker('end', routingData.nodes[nearestId], SETTINGS.colors.pathEnd);
-    const path = computePathAStar(startNode, endNode);
-    if (path) drawPath(path);
-    startNode = null;
-  }
-}
-
-function findNearestNode(x, z) {
-  let closestId = null;
-  let minDist = Infinity;
-  for (const [id, node] of Object.entries(routingData.nodes)) {
-    // node.y is already flipped to match Z
-    const dx = node.x - x;
-    const dz = node.y - z;
-    const d2 = dx * dx + dz * dz;
-    if (d2 < minDist) {
-      minDist = d2;
-      closestId = parseInt(id);
-    }
-  }
-  return closestId;
-}
-
-function computePathAStar(start, end) {
-  const openSet = new Set([start]);
-  const cameFrom = {};
-  const gScore = {};
-  const fScore = {};
-
-  gScore[start] = 0;
-  fScore[start] = heuristic(start, end);
-
-  while (openSet.size > 0) {
-    let current = null;
-    let minF = Infinity;
-    for (const node of openSet) {
-      const score = fScore[node] !== undefined ? fScore[node] : Infinity;
-      if (score < minF) { minF = score; current = node; }
-    }
-
-    if (current === end) return reconstructPath(cameFrom, current);
-
-    openSet.delete(current);
-
-    const neighbors = routingData.adjacency[current] || [];
-    for (const neighbor of neighbors) {
-      const tentativeG = gScore[current] + neighbor.cost;
-      if (tentativeG < (gScore[neighbor.to] !== undefined ? gScore[neighbor.to] : Infinity)) {
-        cameFrom[neighbor.to] = { prev: current, edgeIdx: neighbor.edgeIndex, isReverse: neighbor.isReverse };
-        gScore[neighbor.to] = tentativeG;
-        fScore[neighbor.to] = tentativeG + heuristic(neighbor.to, end);
-        openSet.add(neighbor.to);
-      }
-    }
-  }
-  return null;
-}
-
-function heuristic(a, b) {
-  const nA = routingData.nodes[a];
-  const nB = routingData.nodes[b];
-  return Math.sqrt((nA.x - nB.x) ** 2 + (nA.y - nB.y) ** 2);
-}
-
-function reconstructPath(cameFrom, current) {
-  const edges = [];
-  while (current in cameFrom) {
-    const data = cameFrom[current];
-    edges.push({ edgeData: routingData.edges[data.edgeIdx], isReverse: data.isReverse });
-    current = data.prev;
-  }
-  return edges.reverse();
-}
-
-// ==========================================
-// 6. Path Drawing
-// ==========================================
-function drawPath(pathEdges) {
-  if (markers.pathMesh) scene.remove(markers.pathMesh);
-
-  const points = [];
-  const ROAD_OFFSET = 3.0;
-
-  pathEdges.forEach(step => {
-    const rawPoints = step.edgeData.points;
-    // Map raw array to Vectors. Note: p[1] is already flipped to Z space
-    let segmentPoints = rawPoints.map(p => new THREE.Vector2(p[0], p[1]));
-
-    if (step.isReverse) segmentPoints.reverse();
-
-    // Calculate offset for "Right Hand Drive"
-    const offsetSegment = getOffsetPath(segmentPoints, ROAD_OFFSET);
-
-    offsetSegment.forEach(p => {
-      // p.x is X, p.y is Z (since we flipped it)
-      points.push(new THREE.Vector3(p.x, 0.5, p.y));
-    });
-  });
-
-  const curve = new THREE.CatmullRomCurve3(points);
-  const tubeGeom = new THREE.TubeGeometry(curve, points.length, 1.5, 6, false);
-  const tubeMat = new THREE.MeshBasicMaterial({ color: SETTINGS.colors.route });
-  markers.pathMesh = new THREE.Mesh(tubeGeom, tubeMat);
-  scene.add(markers.pathMesh);
-}
-
-function getOffsetPath(points, offset) {
-  if (points.length < 2) return points;
-  const newPath = [];
-
-  for (let i = 0; i < points.length - 1; i++) {
-    const p1 = points[i];
-    const p2 = points[i + 1];
-
-    const dir = new THREE.Vector2().subVectors(p2, p1).normalize();
-    // Normal for Right side: (-y, x) 
-    // Since our Coordinate system is flipped (Z is inverted), (-y, x) works as "Right"
-    const normal = new THREE.Vector2(-dir.y, dir.x);
-
-    const off = normal.multiplyScalar(offset);
-    newPath.push(new THREE.Vector2().addVectors(p1, off));
-    if (i === points.length - 2) newPath.push(new THREE.Vector2().addVectors(p2, off));
-  }
-  return newPath;
-}
-
-function placeMarker(type, node, color) {
-  if (markers[type]) scene.remove(markers[type]);
-  const geom = new THREE.SphereGeometry(4);
-  const mat = new THREE.MeshBasicMaterial({ color: color });
-  const mesh = new THREE.Mesh(geom, mat);
-  // node.y is now Z
-  mesh.position.set(node.x, 2, node.y);
-  markers[type] = mesh;
-  scene.add(mesh);
 }
 
 function animate() {
