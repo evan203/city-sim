@@ -14,7 +14,9 @@ const SETTINGS = {
   colors: {
     background: 0xE6E6E6,
     ground: 0xDDDDDD,
-    building: 0xFFFFFF,
+    zoningRes: new THREE.Color(0xA855F7),
+    zoningCom: new THREE.Color(0x3B82F6),
+    building: new THREE.Color(0xFFFFFF),
     water: 0xAADAFF,
     park: 0xC3E6CB,
     road: 0x999999,
@@ -57,6 +59,10 @@ function init() {
     uiManager.updateStats(dist);
   };
 
+  uiManager.onToggleZoning = (isActive) => {
+    updateBuildingColors(isActive);
+  };
+
   // 3. Data Load
   Promise.all([
     fetch(SETTINGS.files.visual).then(r => r.json()),
@@ -69,6 +75,38 @@ function init() {
 
   animate();
 }
+
+function updateBuildingColors(showZoning) {
+  scene.traverse((obj) => {
+    // We tagged buildings with userData in renderCity (see below)
+    if (obj.name === 'BUILDING_MESH') {
+
+      if (!showZoning) {
+        // Revert to white
+        obj.material.color.setHex(SETTINGS.colors.building.getHex());
+        return;
+      }
+
+      // Get Data
+      const data = obj.userData.cityData; // We need to ensure we save this during creation
+      if (!data) return;
+
+      if (data.type === 'residential') {
+        // Lerp from White to Purple based on density
+        const color = SETTINGS.colors.building.clone();
+        color.lerp(SETTINGS.colors.zoningRes, data.density || 0.5);
+        obj.material.color.copy(color);
+      }
+      else if (data.type === 'commercial') {
+        // Lerp from White to Blue
+        const color = SETTINGS.colors.building.clone();
+        color.lerp(SETTINGS.colors.zoningCom, data.density || 0.5);
+        obj.material.color.copy(color);
+      }
+    }
+  });
+}
+
 
 // ==========================================
 // 2. Scene Setup
@@ -97,6 +135,10 @@ function setupScene() {
   dirLight.shadow.camera.right = 1500;
   dirLight.shadow.camera.top = 1500;
   dirLight.shadow.camera.bottom = -1500;
+  dirLight.shadow.camera.near = 0.5;
+  dirLight.shadow.camera.far = 3000; // Must be > 1225 to reach the ground
+  dirLight.shadow.bias = -0.01;    // Clean up shadow artifacts
+
   scene.add(dirLight);
 
   const plane = new THREE.Mesh(
@@ -168,11 +210,59 @@ function renderCity(data) {
     scene.add(mesh);
   };
 
+  createBuildingLayer(data.buildings);
+
   createLayer(data.water, SETTINGS.colors.water, 0, 0.1, false);
   createLayer(data.parks, SETTINGS.colors.park, 0, 0.2, false);
   createLayer(data.roads, SETTINGS.colors.road, 0, 0.3, false);
-  createLayer(data.buildings, SETTINGS.colors.building, 10, 0, true);
+
 }
+
+function createBuildingLayer(buildings) {
+  if (!buildings || !buildings.length) return;
+
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: SETTINGS.colors.building,
+    roughness: 0.6,
+    side: THREE.DoubleSide,
+    shadowSide: THREE.DoubleSide
+
+  });
+
+  buildings.forEach(b => {
+    const shape = new THREE.Shape();
+    if (b.shape.outer.length < 3) return;
+    shape.moveTo(b.shape.outer[0][0], b.shape.outer[0][1]);
+    for (let i = 1; i < b.shape.outer.length; i++) shape.lineTo(b.shape.outer[i][0], b.shape.outer[i][1]);
+
+    if (b.shape.holes) {
+      b.shape.holes.forEach(h => {
+        const path = new THREE.Path();
+        path.moveTo(h[0][0], h[0][1]);
+        for (let k = 1; k < h.length; k++) path.lineTo(h[k][0], h[k][1]);
+        shape.holes.push(path);
+      });
+    }
+
+    const geom = new THREE.ExtrudeGeometry(shape, {
+      depth: b.height,
+      bevelEnabled: false
+    });
+    geom.rotateX(-Math.PI / 2);
+
+    const mesh = new THREE.Mesh(geom, mat.clone());
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+
+    // Store metadata for the Zoning Toggle
+    mesh.name = 'BUILDING_MESH';
+    mesh.userData.cityData = b.data;
+
+    scene.add(mesh);
+  });
+}
+
 
 function animate() {
   requestAnimationFrame(animate);

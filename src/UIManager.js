@@ -9,6 +9,10 @@ export class UIManager {
     this.btnSave = document.getElementById('btn-save');
     this.btnDiscard = document.getElementById('btn-discard');
     this.btnToggle = document.getElementById('ui-toggle');
+    this.btnZoning = document.getElementById('btn-zoning');
+
+    // We need a callback to main.js to actually change colors
+    this.onToggleZoning = null;
 
     this.initListeners();
   }
@@ -29,6 +33,17 @@ export class UIManager {
     this.btnToggle.addEventListener('click', () => {
       this.elContainer.classList.toggle('hidden');
     });
+
+    this.btnZoning.addEventListener('click', () => {
+      const isActive = this.btnZoning.classList.toggle('active');
+      this.btnZoning.style.background = isActive ? '#4B5563' : ''; // Darken when active
+      this.btnZoning.style.color = isActive ? 'white' : '';
+
+      if (this.onToggleZoning) {
+        this.onToggleZoning(isActive);
+      }
+    });
+
   }
 
   updateStats(lengthInMeters) {
