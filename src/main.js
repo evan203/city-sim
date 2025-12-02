@@ -2,9 +2,10 @@ import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 
-// Import our Classes
 import { InputManager } from './InputManager.js';
 import { RouteManager } from './RouteManager.js';
+import { UIManager } from './UIManager.js';
+
 
 // ==========================================
 // 1. Configuration
@@ -28,34 +29,35 @@ const SETTINGS = {
 };
 
 let scene, camera, renderer, controls;
-let inputManager, routeManager;
+let inputManager, routeManager, uiManager;
 
 function init() {
   setupScene();
 
-  // -- INITIALIZATION --
-  // 1. Create Route Manager
+  // 1. Managers
   routeManager = new RouteManager(scene, SETTINGS);
-
-  // 2. Create Input Manager (Pass controls so we can disable them during drag)
   inputManager = new InputManager(camera, renderer.domElement, scene, controls);
+  uiManager = new UIManager(routeManager); // Wire UI to Route Logic
+
+  // 2. Events
   inputManager.init();
 
-  // 3. Wire Events
-
-  // Handle Click (Add Node)
   inputManager.onClick = (point, object) => {
     if (object.name === "GROUND") {
       routeManager.addNodeByWorldPosition(point);
     }
   };
 
-  // Handle Drag (Move Node)
   inputManager.onDrag = (markerObject, newPoint) => {
     routeManager.dragNode(markerObject, newPoint);
   };
 
-  // 4. Load Data
+  // Wire RouteManager back to UI (to update stats when dragging)
+  routeManager.onRouteChanged = (dist) => {
+    uiManager.updateStats(dist);
+  };
+
+  // 3. Data Load
   Promise.all([
     fetch(SETTINGS.files.visual).then(r => r.json()),
     fetch(SETTINGS.files.routing).then(r => r.json())

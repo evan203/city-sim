@@ -7,37 +7,38 @@ export class RouteManager {
 
     this.graphData = null;
 
-    // State: A route is an ordered list of Node IDs
+    // -- State --
     this.currentRouteNodes = [];
+    this.savedRoutes = []; // { nodes: [], length: number, mesh: THREE.Mesh }
 
-    // Visuals
-    this.markers = []; // Array of Meshes. index matches currentRouteNodes
-    this.pathMesh = null;
+    // -- Visuals --
+    this.markers = []; // Draggable spheres
+    this.currentPathMesh = null; // The tube being edited
 
-    this.ROAD_OFFSET = 2.5; // Meters
+    this.ROAD_OFFSET = 2.5;
+
+    // -- Callbacks --
+    this.onRouteChanged = null; // function(lengthInMeters)
   }
 
   initGraph(data) {
     this.graphData = data;
     this.graphData.adjacency = {};
 
-    // 1. Flip Coordinates (Data is +Y North, 3D is -Z North)
+    // 1. Flip Coordinates
     for (let key in this.graphData.nodes) {
       this.graphData.nodes[key].y = -this.graphData.nodes[key].y;
     }
 
     // 2. Build Adjacency
     this.graphData.edges.forEach((edge, index) => {
-      // Flip edge geometry
       if (edge.points) edge.points.forEach(p => { p[1] = -p[1]; });
 
-      // Forward
       if (!this.graphData.adjacency[edge.u]) this.graphData.adjacency[edge.u] = [];
       this.graphData.adjacency[edge.u].push({
         to: edge.v, cost: edge.length || 1, edgeIndex: index
       });
 
-      // Reverse (if not oneway)
       if (!edge.oneway) {
         if (!this.graphData.adjacency[edge.v]) this.graphData.adjacency[edge.v] = [];
         this.graphData.adjacency[edge.v].push({
@@ -48,7 +49,7 @@ export class RouteManager {
   }
 
   // ============================
-  // Interaction Methods
+  // API Methods (For UI/Input)
   // ============================
 
   addNodeByWorldPosition(vector3) {
@@ -56,126 +57,172 @@ export class RouteManager {
     const nodeId = this.findNearestNode(vector3.x, vector3.z);
     if (nodeId === null) return;
 
-    // Don't add duplicate adjacent nodes
     if (this.currentRouteNodes.length > 0 &&
       this.currentRouteNodes[this.currentRouteNodes.length - 1] === nodeId) {
       return;
     }
 
     this.currentRouteNodes.push(nodeId);
-
-    // Add new marker
     this.addMarkerVisual(nodeId);
-
-    // Update path
     this.updatePathVisuals();
   }
 
-  /**
-   * Called while dragging a marker.
-   * Updates the node at markerIndex to the nearest graph node at worldPoint.
-   */
   dragNode(markerObject, worldPoint) {
     if (!this.graphData) return;
-
-    // 1. Identify which node index this marker represents
     const index = this.markers.indexOf(markerObject);
     if (index === -1) return;
 
-    // 2. Find nearest node to new mouse position
     const newNodeId = this.findNearestNode(worldPoint.x, worldPoint.z);
 
-    // 3. Optimization: Only update if the node ID actually changed
     if (this.currentRouteNodes[index] !== newNodeId) {
-
       this.currentRouteNodes[index] = newNodeId;
 
-      // Update Marker Visual Position
       const nodeData = this.graphData.nodes[newNodeId];
       markerObject.position.set(nodeData.x, 2, nodeData.y);
-      markerObject.userData.nodeId = newNodeId; // Keep sync
+      markerObject.userData.nodeId = newNodeId;
 
-      // Recalculate Path
       this.updatePathVisuals();
     }
   }
 
+  saveCurrentRoute() {
+    if (this.currentRouteNodes.length < 2 || !this.currentPathMesh) return;
+
+    // 1. Calculate final length
+    const totalLength = this.currentPathMesh.userData.length || 0;
+
+    // 2. Freeze the mesh (Change color to indicate saved state)
+    this.currentPathMesh.material.color.setHex(0x10B981); // Emerald Green
+
+    // 3. Store in saved list
+    this.savedRoutes.push({
+      nodes: [...this.currentRouteNodes],
+      length: totalLength,
+      mesh: this.currentPathMesh
+    });
+
+    // 4. Detach mesh from "current" reference so we don't delete it on reset
+    this.currentPathMesh = null;
+
+    // 5. Clear drafting state (remove markers, clear node list)
+    this.resetDraftingState();
+  }
+
+  clearCurrentRoute() {
+    // 1. Remove current mesh from scene
+    if (this.currentPathMesh) {
+      this.scene.remove(this.currentPathMesh);
+      this.currentPathMesh.geometry.dispose();
+      this.currentPathMesh = null;
+    }
+    // 2. Reset state
+    this.resetDraftingState();
+  }
+
+  resetDraftingState() {
+    this.currentRouteNodes = [];
+    // Remove all markers
+    this.markers.forEach(m => this.scene.remove(m));
+    this.markers = [];
+
+    // Notify UI
+    if (this.onRouteChanged) this.onRouteChanged(0);
+  }
+
+  deleteSavedRoute(index) {
+    if (index < 0 || index >= this.savedRoutes.length) return;
+
+    const route = this.savedRoutes[index];
+
+    // Remove mesh from scene
+    if (route.mesh) {
+      this.scene.remove(route.mesh);
+      route.mesh.geometry.dispose();
+    }
+
+    this.savedRoutes.splice(index, 1);
+  }
+
+  getSavedRoutes() {
+    return this.savedRoutes;
+  }
+
   // ============================
-  // Visual Logic
+  // Visuals & Logic
   // ============================
 
   updatePathVisuals() {
-    // Need 2+ nodes to make a path
+    // Needs 2+ nodes
     if (this.currentRouteNodes.length < 2) {
-      if (this.pathMesh) {
-        this.scene.remove(this.pathMesh);
-        this.pathMesh = null;
+      if (this.currentPathMesh) {
+        this.scene.remove(this.currentPathMesh);
+        this.currentPathMesh = null;
       }
+      if (this.onRouteChanged) this.onRouteChanged(0);
       return;
     }
 
-    // 1. Calculate Geometry
     let fullPathPoints = [];
+    let totalDist = 0;
 
     for (let i = 0; i < this.currentRouteNodes.length - 1; i++) {
       const start = this.currentRouteNodes[i];
       const end = this.currentRouteNodes[i + 1];
 
-      // Run A* for this segment
       const segmentEdges = this.computePathAStar(start, end);
 
-      if (!segmentEdges) {
-        // No path found (disconnected graph?), just draw straight line or skip
-        continue;
-      }
+      if (!segmentEdges) continue;
 
-      // Process Geometry
       segmentEdges.forEach(step => {
+        totalDist += step.edgeData.cost || 0; // Accumulate distance
+
         const rawPoints = step.edgeData.points;
         let segmentPoints = rawPoints.map(p => new THREE.Vector2(p[0], p[1]));
         if (step.isReverse) segmentPoints.reverse();
 
-        // Offset
         const offsetSegment = this.getOffsetPath(segmentPoints, this.ROAD_OFFSET);
         offsetSegment.forEach(p => fullPathPoints.push(new THREE.Vector3(p.x, 0.5, p.y)));
       });
     }
 
-    // 2. Update/Create Mesh
-    if (this.pathMesh) {
-      this.scene.remove(this.pathMesh);
-      this.pathMesh.geometry.dispose();
+    // Update Mesh
+    if (this.currentPathMesh) {
+      this.scene.remove(this.currentPathMesh);
+      this.currentPathMesh.geometry.dispose();
     }
 
     if (fullPathPoints.length < 2) return;
 
     const curve = new THREE.CatmullRomCurve3(fullPathPoints);
-    // Low tension = smoother corners
     const tubeGeom = new THREE.TubeGeometry(curve, fullPathPoints.length, 1.5, 6, false);
     const tubeMat = new THREE.MeshBasicMaterial({ color: this.settings.colors.route });
 
-    this.pathMesh = new THREE.Mesh(tubeGeom, tubeMat);
-    this.scene.add(this.pathMesh);
+    this.currentPathMesh = new THREE.Mesh(tubeGeom, tubeMat);
+    // Store length on the mesh for easy access later
+    this.currentPathMesh.userData.length = totalDist;
+
+    this.scene.add(this.currentPathMesh);
+
+    // Update markers color (First=Green, Last=Red, Others=Yellow)
+    this.updateMarkerColors();
+
+    // Trigger Callback
+    if (this.onRouteChanged) this.onRouteChanged(totalDist);
+  }
+
+  updateMarkerColors() {
+    this.markers.forEach((marker, i) => {
+      let color = 0xFFFF00; // Default Yellow (Waypoint)
+      if (i === 0) color = this.settings.colors.pathStart; // Green
+      else if (i === this.markers.length - 1) color = this.settings.colors.pathEnd; // Red
+      marker.material.color.setHex(color);
+    });
   }
 
   addMarkerVisual(nodeId) {
     const node = this.graphData.nodes[nodeId];
     const geom = new THREE.SphereGeometry(4);
-
-    // Color Logic: Start(Green) -> End(Red). Intermediate? Yellow.
-    let color = this.settings.colors.pathStart;
-    if (this.markers.length > 0) color = this.settings.colors.pathEnd; // Default to End color
-
-    // If we are adding a new end, turn the PREVIOUS end into a waypoint (Yellow)
-    if (this.markers.length > 0) {
-      // Change the previous last marker to yellow (waypoint)
-      // Unless it was the start marker (index 0)
-      if (this.markers.length > 1) {
-        this.markers[this.markers.length - 1].material.color.setHex(0xFFFF00);
-      }
-    }
-
-    const mat = new THREE.MeshBasicMaterial({ color: color });
+    const mat = new THREE.MeshBasicMaterial({ color: this.settings.colors.pathEnd });
     const mesh = new THREE.Mesh(geom, mat);
 
     mesh.position.set(node.x, 2, node.y);
@@ -183,10 +230,12 @@ export class RouteManager {
 
     this.scene.add(mesh);
     this.markers.push(mesh);
+
+    this.updateMarkerColors();
   }
 
   // ============================
-  // Algorithms (A* & Math)
+  // Algorithms (A* & Helpers)
   // ============================
 
   findNearestNode(x, z) {
@@ -206,12 +255,10 @@ export class RouteManager {
 
   computePathAStar(start, end) {
     if (start === end) return [];
-
     const openSet = new Set([start]);
     const cameFrom = {};
     const gScore = {};
     const fScore = {};
-
     gScore[start] = 0;
     fScore[start] = this.heuristic(start, end);
 
@@ -222,9 +269,7 @@ export class RouteManager {
         const score = fScore[node] !== undefined ? fScore[node] : Infinity;
         if (score < minF) { minF = score; current = node; }
       }
-
       if (current === end) return this.reconstructPath(cameFrom, current);
-
       openSet.delete(current);
 
       const neighbors = this.graphData.adjacency[current] || [];

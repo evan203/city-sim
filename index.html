@@ -5,15 +5,36 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>3D City Sim</title>
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-    }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
+  <!-- The UI Overlay -->
+  <div id="ui-container">
+    <div class="header">
+      <h2>Route Planner</h2>
+      <p>Left Click: Add Point<br>Drag: Move Point</p>
+    </div>
+
+    <div class="section">
+      <h3>Current Draft</h3>
+      <div class="stat-row">
+        <span>Length:</span>
+        <span id="current-length">0 m</span>
+      </div>
+      <div class="button-row">
+        <button id="btn-save" class="primary">Save Route</button>
+        <button id="btn-discard" class="danger">Discard</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Saved Routes</h3>
+      <ul id="route-list">
+        <!-- List items will be injected here -->
+      </ul>
+    </div>
+  </div>
   <script type="module" src="/src/main.js"></script>
 </body>
 
