@@ -1,7 +1,7 @@
 export class UIManager {
   constructor(routeManager) {
     this.routeManager = routeManager;
-    this.gameManager = null; // Set via dependency injection in main.js if needed, or we just access logic differently
+    this.gameManager = null;
 
     // UI Elements
     this.elCurrentLength = document.getElementById('current-length');
@@ -76,7 +76,7 @@ export class UIManager {
         }
       };
       reader.readAsText(file);
-      e.target.value = ''; // Reset so we can load same file again if needed
+      e.target.value = '';
     });
   }
 
@@ -116,43 +116,87 @@ export class UIManager {
 
     routes.forEach((route, index) => {
       const li = document.createElement('li');
+      li.style.display = 'flex';
+      li.style.alignItems = 'center';
+      li.style.justifyContent = 'space-between';
+      li.style.padding = '8px 0';
+      li.style.borderBottom = '1px solid #eee';
 
+      // --- BADGE CONTAINER ---
+      // This holds both the visual badge and the invisible input on top of it
+      const badgeContainer = document.createElement('div');
+      badgeContainer.style.position = 'relative';
+      badgeContainer.style.width = '28px';
+      badgeContainer.style.height = '28px';
+      badgeContainer.style.marginRight = '10px';
+
+      // 1. The Visual Badge (Background)
+      const badge = document.createElement('div');
+      badge.textContent = (index + 1);
+      badge.style.width = '100%';
+      badge.style.height = '100%';
+      badge.style.backgroundColor = route.color;
+      badge.style.color = '#fff';
+      badge.style.fontWeight = 'bold';
+      badge.style.display = 'flex';
+      badge.style.alignItems = 'center';
+      badge.style.justifyContent = 'center';
+      badge.style.borderRadius = '4px';
+      badge.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+      badge.style.textShadow = '0 1px 2px rgba(0,0,0,0.5)';
+
+      // 2. The Invisible Input (Overlay)
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = route.color || "#000000";
+
+      // Style to overlay exactly on top of the badge
+      colorInput.style.position = 'absolute';
+      colorInput.style.top = '0';
+      colorInput.style.left = '0';
+      colorInput.style.width = '100%';
+      colorInput.style.height = '100%';
+      colorInput.style.opacity = '0'; // Visually invisible
+      colorInput.style.cursor = 'pointer'; // Show pointer so user knows it's clickable
+      colorInput.style.border = 'none';
+      colorInput.style.padding = '0';
+
+      // Update logic
+      colorInput.addEventListener('input', (e) => {
+        const newColor = e.target.value;
+        badge.style.backgroundColor = newColor;
+        this.routeManager.updateRouteColor(index, newColor);
+      });
+
+      badgeContainer.appendChild(badge);
+      badgeContainer.appendChild(colorInput);
+      li.appendChild(badgeContainer);
+
+      // --- ROUTE INFO ---
       let lenStr = route.stats.length > 1000
         ? (route.stats.length / 1000).toFixed(1) + "km"
         : Math.round(route.stats.length) + "m";
 
-      // Color Picker
-      const colorInput = document.createElement('input');
-      colorInput.type = 'color';
-      colorInput.value = route.color || "#000000";
-      colorInput.style.border = "none";
-      colorInput.style.width = "24px";
-      colorInput.style.height = "24px";
-      colorInput.style.cursor = "pointer";
-      colorInput.title = "Change Route Color";
+      const infoDiv = document.createElement('div');
+      infoDiv.style.flex = '1';
+      infoDiv.style.display = 'flex';
+      infoDiv.style.flexDirection = 'column';
 
-      colorInput.addEventListener('input', (e) => {
-        this.routeManager.updateRouteColor(index, e.target.value);
-      });
+      infoDiv.innerHTML = `
+        <span style="font-size:12px; font-weight:600; color:#333;">Line ${index + 1}</span>
+        <span style="font-size:11px; color:#666;">${lenStr} | ${route.stats.ridership} riders</span>
+      `;
 
-      const span = document.createElement('span');
-      span.innerHTML = `
-                <strong>Route ${index + 1}</strong> <br>
-                <small>${lenStr} | ${route.stats.ridership} riders</small>
-            `;
-
-      const detailsDiv = document.createElement('div');
-      detailsDiv.style.display = "flex";
-      detailsDiv.style.alignItems = "center";
-      detailsDiv.style.gap = "8px";
-      detailsDiv.appendChild(colorInput);
-      detailsDiv.appendChild(span);
-
-      li.appendChild(detailsDiv);
+      // --- BUTTONS ---
+      const btnDiv = document.createElement('div');
+      btnDiv.style.display = 'flex';
+      btnDiv.style.gap = '4px';
 
       const btnEdit = document.createElement('button');
-      btnEdit.textContent = "Edit";
-      btnEdit.className = "btn-icon btn-edit";
+      btnEdit.textContent = "✎";
+      btnEdit.className = "btn-icon";
+      btnEdit.title = "Redraw Route";
+      btnEdit.style.padding = "4px 8px";
       btnEdit.onclick = () => {
         this.routeManager.editSavedRoute(index);
         this.renderRouteList();
@@ -160,16 +204,19 @@ export class UIManager {
 
       const btnDel = document.createElement('button');
       btnDel.textContent = "✕";
-      btnDel.className = "btn-icon btn-del";
+      btnDel.className = "btn-icon";
+      btnDel.title = "Delete Route";
+      btnDel.style.color = "#ef4444";
+      btnDel.style.padding = "4px 8px";
       btnDel.onclick = () => {
         this.routeManager.deleteSavedRoute(index);
         this.renderRouteList();
       };
 
-      const btnDiv = document.createElement('div');
       btnDiv.appendChild(btnEdit);
       btnDiv.appendChild(btnDel);
 
+      li.appendChild(infoDiv);
       li.appendChild(btnDiv);
 
       this.elRouteList.appendChild(li);

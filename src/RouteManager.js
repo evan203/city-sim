@@ -288,7 +288,7 @@ export class RouteManager {
       }
     });
     const synergy = Math.min(totalPop, totalJobs);
-    const GAME_BALANCE_MULTIPLIER = 5.0;
+    const GAME_BALANCE_MULTIPLIER = 1.0;
     return Math.floor(synergy * GAME_BALANCE_MULTIPLIER);
   }
 
