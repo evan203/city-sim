@@ -8,12 +8,14 @@ export class RouteManager {
     this.graphData = null;
 
     // -- State --
+    this.isDrafting = false; // New flag
     this.currentRouteNodes = [];
-    this.savedRoutes = []; // { nodes, stats, mesh, color }
+    this.savedRoutes = [];
 
     // -- Visuals --
     this.markers = [];
     this.currentPathMesh = null;
+    this.ghostMarker = null; // Transparent sphere
 
     this.servedNodes = new Set();
     this.servedCoordinates = [];
@@ -25,6 +27,8 @@ export class RouteManager {
 
     // Draft state
     this.latestPathPoints = [];
+
+    this.initGhostMarker();
   }
 
   setVehicleSystem(vs) {
@@ -53,12 +57,60 @@ export class RouteManager {
   }
 
   // ============================
+  // Draft Mode & Ghost Marker
+  // ============================
+
+  initGhostMarker() {
+    const geom = new THREE.SphereGeometry(4);
+    const mat = new THREE.MeshBasicMaterial({
+      color: this.settings.colors.pathStart,
+      transparent: true,
+      opacity: 0.5
+    });
+    this.ghostMarker = new THREE.Mesh(geom, mat);
+    this.ghostMarker.visible = false;
+    this.ghostMarker.name = "GHOST_MARKER"; // Ignore in raycasting
+    this.scene.add(this.ghostMarker);
+  }
+
+  startDrafting() {
+    this.isDrafting = true;
+    this.resetDraftingState();
+  }
+
+  stopDrafting() {
+    this.isDrafting = false;
+    this.ghostMarker.visible = false;
+    this.clearCurrentRoute(); // Clean up visuals
+  }
+
+  // Called by Main.js input listener on mouse move
+  updateGhostMarker(worldPoint) {
+    if (!this.isDrafting || !this.graphData) {
+      this.ghostMarker.visible = false;
+      return;
+    }
+
+    if (!worldPoint) {
+      this.ghostMarker.visible = false;
+      return;
+    }
+
+    const nodeId = this.findNearestNode(worldPoint.x, worldPoint.z);
+    if (nodeId !== null) {
+      const node = this.graphData.nodes[nodeId];
+      this.ghostMarker.position.set(node.x, 2, node.y);
+      this.ghostMarker.visible = true;
+    } else {
+      this.ghostMarker.visible = false;
+    }
+  }
+
+  // ============================
   // Save / Load / Serialization
   // ============================
 
   getSerializableRoutes() {
-    // We only save the node IDs and the color. 
-    // Mesh and stats can be rebuilt.
     return this.savedRoutes.map(r => ({
       nodes: r.nodes,
       color: r.color
@@ -66,7 +118,6 @@ export class RouteManager {
   }
 
   loadRoutes(routesData) {
-    // 1. Cleanup existing
     this.savedRoutes.forEach(r => {
       if (r.mesh) {
         this.scene.remove(r.mesh);
@@ -78,7 +129,6 @@ export class RouteManager {
 
     if (this.vehicleSystem) this.vehicleSystem.clearVehicles();
 
-    // 2. Rebuild each route
     routesData.forEach((data, index) => {
       this.rebuildRouteFromData(data.nodes, data.color || this.getRandomColor(), index);
     });
@@ -87,27 +137,22 @@ export class RouteManager {
   }
 
   rebuildRouteFromData(nodes, color, routeIndex) {
-    // 1. Calculate Path Geometry
     const pathResult = this.calculateGeometryFromNodes(nodes);
     if (!pathResult) return;
 
-    // 2. Create Mesh
     const tubeMat = new THREE.MeshBasicMaterial({ color: color });
     const mesh = new THREE.Mesh(pathResult.geometry, tubeMat);
     this.scene.add(mesh);
 
-    // 3. Spawn Bus
     if (this.vehicleSystem && pathResult.points.length > 0) {
       this.vehicleSystem.addBusToRoute(pathResult.points, color, routeIndex);
     }
 
-    // 4. Calculate Stats
     const ridership = this.calculateRidership(nodes);
 
-    // 5. Store
     this.savedRoutes.push({
       nodes: [...nodes],
-      stats: { length: pathResult.length, cost: 0, ridership }, // Cost is sunk history, doesn't matter for load
+      stats: { length: pathResult.length, cost: 0, ridership },
       mesh: mesh,
       color: color
     });
@@ -123,25 +168,25 @@ export class RouteManager {
   // ============================
 
   saveCurrentRoute() {
-    if (this.currentRouteNodes.length < 2 || !this.currentPathMesh) return;
+    if (!this.isDrafting) return false;
+    if (this.currentRouteNodes.length < 2 || !this.currentPathMesh) {
+      alert("Route must have at least 2 points.");
+      return false;
+    }
 
     const length = this.currentPathMesh.userData.length || 0;
     const cost = this.gameManager.getProjectedCost(length);
 
     if (!this.gameManager.canAfford(cost)) {
       alert("Insufficient Funds!");
-      return;
+      return false;
     }
 
     this.gameManager.deductFunds(cost);
 
-    // 1. Define Color (Random default)
     const color = this.getRandomColor();
-
-    // 2. Finalize Visuals
     this.currentPathMesh.material.color.set(color);
 
-    // 3. Register Route
     const routeIndex = this.savedRoutes.length;
 
     if (this.vehicleSystem && this.latestPathPoints.length > 0) {
@@ -157,29 +202,22 @@ export class RouteManager {
       color: color
     });
 
-    // Cleanup draft state
-    this.currentPathMesh = null;
-    this.resetDraftingState();
+    // We do NOT call stopDrafting here, UIManager handles the logic to call stopDrafting
+    // We just return success
+    this.currentPathMesh = null; // Detach mesh from manager so it stays in scene
     this.refreshServedNodes();
     this.gameManager.recalculateApproval();
     this.gameManager.updateUI();
+
+    return true;
   }
 
   updateRouteColor(index, hexColor) {
     if (index < 0 || index >= this.savedRoutes.length) return;
-
     const route = this.savedRoutes[index];
     route.color = hexColor;
-
-    // Update Track Mesh
-    if (route.mesh) {
-      route.mesh.material.color.set(hexColor);
-    }
-
-    // Update Vehicles
-    if (this.vehicleSystem) {
-      this.vehicleSystem.updateRouteColor(index, hexColor);
-    }
+    if (route.mesh) route.mesh.material.color.set(hexColor);
+    if (this.vehicleSystem) this.vehicleSystem.updateRouteColor(index, hexColor);
   }
 
   deleteSavedRoute(index) {
@@ -191,19 +229,11 @@ export class RouteManager {
       route.mesh.geometry.dispose();
     }
 
-    // We can't easily remove buses for just one route without refactoring array indices
-    // Simplification: Reload all buses or mark them as dead. 
-    // To keep it simple: We will remove the route data, and rebuild the vehicle system's arrays relative to new indices.
-
-    // 1. Remove from array
     this.savedRoutes.splice(index, 1);
 
-    // 2. Refresh simulation (easiest way to handle index shifts)
-    // Save current state -> Clear Vehicles -> Rebuild Vehicles
     if (this.vehicleSystem) {
       this.vehicleSystem.clearVehicles();
       this.savedRoutes.forEach((r, idx) => {
-        // Need to regenerate points for the bus system
         const pathRes = this.calculateGeometryFromNodes(r.nodes);
         if (pathRes && pathRes.points.length > 0) {
           this.vehicleSystem.addBusToRoute(pathRes.points, r.color, idx);
@@ -220,15 +250,11 @@ export class RouteManager {
     // Delete and pull back to draft
     if (index < 0 || index >= this.savedRoutes.length) return;
 
-    // We actually just delete it and put nodes in draft
-    // The player loses the "sunk cost" of construction in this simple version
     const route = this.savedRoutes[index];
     this.currentRouteNodes = [...route.nodes];
-
-    // Delete the existing
     this.deleteSavedRoute(index);
 
-    // Visualize draft
+    // Visualize draft immediately
     this.currentRouteNodes.forEach(nodeId => this.addMarkerVisual(nodeId));
     this.updatePathVisuals();
   }
@@ -292,10 +318,10 @@ export class RouteManager {
     return Math.floor(synergy * GAME_BALANCE_MULTIPLIER);
   }
 
-  // ... (Existing Pathfinding & Drafting Methods) ...
-
   addNodeByWorldPosition(vector3) {
+    if (!this.isDrafting) return; // BLOCK INPUT IF NOT DRAFTING
     if (!this.graphData) return;
+
     const nodeId = this.findNearestNode(vector3.x, vector3.z);
     if (nodeId === null) return;
     if (this.currentRouteNodes.length > 0 && this.currentRouteNodes[this.currentRouteNodes.length - 1] === nodeId) return;
@@ -305,6 +331,7 @@ export class RouteManager {
   }
 
   dragNode(markerObject, worldPoint) {
+    if (!this.isDrafting) return; // BLOCK DRAG IF NOT DRAFTING
     if (!this.graphData) return;
     const index = this.markers.indexOf(markerObject);
     if (index === -1) return;
@@ -342,13 +369,11 @@ export class RouteManager {
       return;
     }
 
-    // Reuse logic
     const result = this.calculateGeometryFromNodes(this.currentRouteNodes);
     if (!result) return;
 
     this.latestPathPoints = result.points;
 
-    // Rebuild Mesh
     if (this.currentPathMesh) {
       this.scene.remove(this.currentPathMesh);
       this.currentPathMesh.geometry.dispose();
@@ -505,3 +530,4 @@ export class RouteManager {
     return newPath;
   }
 }
+

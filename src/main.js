@@ -49,23 +49,31 @@ function init() {
 
   // 2. Game Logic
   gameManager = new GameManager(routeManager, uiManager);
-  routeManager.setGameManager(gameManager); // Dependency Injection
+  routeManager.setGameManager(gameManager);
 
   // Vehicle System
   vehicleSystem = new VehicleSystem(scene);
-  routeManager.setVehicleSystem(vehicleSystem); // Inject into RouteManager
-
+  routeManager.setVehicleSystem(vehicleSystem);
 
   // 3. Input
   inputManager = new InputManager(camera, renderer.domElement, scene, controls);
   inputManager.init();
 
-  // Wiring
+  // Wiring Click
   inputManager.onClick = (point, object) => {
+    // Only allow adding nodes if we are actually in drafting mode
+    // (RouteManager handles the check internally, but we pass the intent)
     if (object.name === "GROUND") routeManager.addNodeByWorldPosition(point);
   };
+
+  // Wiring Drag
   inputManager.onDrag = (markerObject, newPoint) => {
     routeManager.dragNode(markerObject, newPoint);
+  };
+
+  // Wiring Hover (NEW)
+  inputManager.onHover = (point) => {
+    routeManager.updateGhostMarker(point);
   };
 
   // Wire UI View Mode
@@ -76,7 +84,6 @@ function init() {
 
   routeManager.onRouteChanged = (stats) => {
     uiManager.updateDraftStats(stats);
-    // If in coverage view, we might need to refresh colors as coverage changes
     if (currentViewMode === 'approval') updateBuildingColors();
   };
 
@@ -87,7 +94,7 @@ function init() {
   ]).then(([visual, routing]) => {
     routeManager.initGraph(routing);
     renderCity(visual);
-    gameManager.start(); // Start the loop
+    gameManager.start();
   });
 
   animate();

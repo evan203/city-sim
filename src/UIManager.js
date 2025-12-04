@@ -3,6 +3,10 @@ export class UIManager {
     this.routeManager = routeManager;
     this.gameManager = null;
 
+    // Panels
+    this.panelMain = document.getElementById('ui-main-menu');
+    this.panelDraft = document.getElementById('ui-draft-menu');
+
     // UI Elements
     this.elCurrentLength = document.getElementById('current-length');
     this.elCurrentCost = document.getElementById('current-cost');
@@ -17,6 +21,8 @@ export class UIManager {
     this.elRouteList = document.getElementById('route-list');
     this.elContainer = document.getElementById('ui-container');
 
+    // Buttons
+    this.btnCreate = document.getElementById('btn-create-route');
     this.btnSave = document.getElementById('btn-save');
     this.btnDiscard = document.getElementById('btn-discard');
     this.btnToggle = document.getElementById('ui-toggle');
@@ -34,14 +40,24 @@ export class UIManager {
   }
 
   initListeners() {
+    // --- MODE SWITCHING ---
+    this.btnCreate.addEventListener('click', () => {
+      this.enterDraftMode();
+    });
+
     this.btnSave.addEventListener('click', () => {
-      this.routeManager.saveCurrentRoute();
-      this.renderRouteList();
+      const success = this.routeManager.saveCurrentRoute();
+      if (success) {
+        this.renderRouteList();
+        this.exitDraftMode();
+      }
     });
 
     this.btnDiscard.addEventListener('click', () => {
       this.routeManager.clearCurrentRoute();
+      this.exitDraftMode();
     });
+    // ----------------------
 
     this.btnToggle.addEventListener('click', () => {
       this.elContainer.classList.toggle('hidden');
@@ -80,6 +96,18 @@ export class UIManager {
     });
   }
 
+  enterDraftMode() {
+    this.panelMain.style.display = 'none';
+    this.panelDraft.style.display = 'block';
+    this.routeManager.startDrafting();
+  }
+
+  exitDraftMode() {
+    this.panelMain.style.display = 'block';
+    this.panelDraft.style.display = 'none';
+    this.routeManager.stopDrafting();
+  }
+
   updateGameStats(stats) {
     this.elBudget.textContent = "$" + stats.budget.toLocaleString();
     this.elDay.textContent = stats.day;
@@ -114,6 +142,11 @@ export class UIManager {
     this.elRouteList.innerHTML = '';
     const routes = this.routeManager.getSavedRoutes();
 
+    if (routes.length === 0) {
+      this.elRouteList.innerHTML = '<li style="color:#999; text-align:center; font-style:italic; padding:10px;">No active routes.<br>Click create to build one.</li>';
+      return;
+    }
+
     routes.forEach((route, index) => {
       const li = document.createElement('li');
       li.style.display = 'flex';
@@ -123,14 +156,12 @@ export class UIManager {
       li.style.borderBottom = '1px solid #eee';
 
       // --- BADGE CONTAINER ---
-      // This holds both the visual badge and the invisible input on top of it
       const badgeContainer = document.createElement('div');
       badgeContainer.style.position = 'relative';
       badgeContainer.style.width = '28px';
       badgeContainer.style.height = '28px';
       badgeContainer.style.marginRight = '10px';
 
-      // 1. The Visual Badge (Background)
       const badge = document.createElement('div');
       badge.textContent = (index + 1);
       badge.style.width = '100%';
@@ -145,23 +176,19 @@ export class UIManager {
       badge.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
       badge.style.textShadow = '0 1px 2px rgba(0,0,0,0.5)';
 
-      // 2. The Invisible Input (Overlay)
       const colorInput = document.createElement('input');
       colorInput.type = 'color';
       colorInput.value = route.color || "#000000";
-
-      // Style to overlay exactly on top of the badge
       colorInput.style.position = 'absolute';
       colorInput.style.top = '0';
       colorInput.style.left = '0';
       colorInput.style.width = '100%';
       colorInput.style.height = '100%';
-      colorInput.style.opacity = '0'; // Visually invisible
-      colorInput.style.cursor = 'pointer'; // Show pointer so user knows it's clickable
+      colorInput.style.opacity = '0';
+      colorInput.style.cursor = 'pointer';
       colorInput.style.border = 'none';
       colorInput.style.padding = '0';
 
-      // Update logic
       colorInput.addEventListener('input', (e) => {
         const newColor = e.target.value;
         badge.style.backgroundColor = newColor;
@@ -198,8 +225,9 @@ export class UIManager {
       btnEdit.title = "Redraw Route";
       btnEdit.style.padding = "4px 8px";
       btnEdit.onclick = () => {
+        // Edit flow: Enter draft mode with existing data
         this.routeManager.editSavedRoute(index);
-        this.renderRouteList();
+        this.enterDraftMode(); // UI Change
       };
 
       const btnDel = document.createElement('button');
@@ -209,8 +237,10 @@ export class UIManager {
       btnDel.style.color = "#ef4444";
       btnDel.style.padding = "4px 8px";
       btnDel.onclick = () => {
-        this.routeManager.deleteSavedRoute(index);
-        this.renderRouteList();
+        if (confirm("Delete this route?")) {
+          this.routeManager.deleteSavedRoute(index);
+          this.renderRouteList();
+        }
       };
 
       btnDiv.appendChild(btnEdit);

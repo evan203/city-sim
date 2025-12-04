@@ -5,20 +5,21 @@ export class InputManager {
     this.camera = camera;
     this.domElement = domElement;
     this.scene = scene;
-    this.controls = controls; // Need access to controls to disable them during drag
+    this.controls = controls;
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
 
     // Interaction State
     this.downPosition = new THREE.Vector2();
-    this.dragObject = null; // The object currently being dragged (marker)
+    this.dragObject = null;
     this.isPanning = false;
 
     // Callbacks
     this.onClick = null;     // (point, object) -> void
     this.onDrag = null;      // (object, newPoint) -> void
     this.onDragEnd = null;   // () -> void
+    this.onHover = null;     // (point) -> void  <-- NEW
   }
 
   init() {
@@ -28,20 +29,17 @@ export class InputManager {
   }
 
   onPointerDown(event) {
-    if (event.button !== 0) return; // Left click only
+    if (event.button !== 0) return;
 
-    // Record start position for Pan detection
     this.downPosition.set(event.clientX, event.clientY);
     this.isPanning = false;
 
-    // Raycast to see what we hit (Marker vs Ground)
     const hit = this.raycast(event);
 
     if (hit) {
-      // Case A: We hit a Marker -> Start Dragging
       if (hit.object.userData.isMarker) {
         this.dragObject = hit.object;
-        this.controls.enabled = false; // Disable camera orbit
+        this.controls.enabled = false;
         this.domElement.style.cursor = 'grabbing';
       }
     }
@@ -50,7 +48,6 @@ export class InputManager {
   onPointerMove(event) {
     // Case A: Dragging a Marker
     if (this.dragObject) {
-      // Raycast against the GROUND to find where we are dragging to
       const hit = this.raycastGround(event);
       if (hit && this.onDrag) {
         this.onDrag(this.dragObject, hit.point);
@@ -58,31 +55,30 @@ export class InputManager {
       return;
     }
 
-    // Case B: Detecting Pan
-    // If mouse is down and moving, check distance
-    // (We don't need continuous logic here, just the final check in pointerUp is usually enough,
-    // but for "floating pointer" later we'd use this.)
+    // Case B: Hovering (Ghost Marker Logic) <-- NEW
+    // We only care about hovering the ground for placing new nodes
+    const hit = this.raycastGround(event);
+    if (hit && this.onHover) {
+      this.onHover(hit.point);
+    }
   }
 
   onPointerUp(event) {
     if (event.button !== 0) return;
 
-    // 1. If we were dragging a marker, stop now.
     if (this.dragObject) {
       this.dragObject = null;
-      this.controls.enabled = true; // Re-enable camera
+      this.controls.enabled = true;
       this.domElement.style.cursor = 'auto';
       if (this.onDragEnd) this.onDragEnd();
-      return; // Don't trigger a click
+      return;
     }
 
-    // 2. Check if it was a Camera Pan (move > 3px)
     const upPosition = new THREE.Vector2(event.clientX, event.clientY);
     if (this.downPosition.distanceTo(upPosition) > 3) {
-      return; // It was a pan, ignore
+      return;
     }
 
-    // 3. It was a clean Click (Place new node)
     const hit = this.raycast(event);
     if (hit && hit.object.name === "GROUND" && this.onClick) {
       this.onClick(hit.point, hit.object);
@@ -100,10 +96,12 @@ export class InputManager {
 
   raycast(event) {
     this.raycaster.setFromCamera(this.getMouse(event), this.camera);
-    // Intersection order: Markers (sorted by dist) -> Ground
+    // Ignore Ghost Marker in standard raycast interaction
     const intersects = this.raycaster.intersectObjects(this.scene.children, true);
-    // Return first valid hit (Marker or Ground)
-    return intersects.find(obj => obj.object.name === "GROUND" || obj.object.userData.isMarker);
+    return intersects.find(obj =>
+      (obj.object.name === "GROUND" || obj.object.userData.isMarker) &&
+      obj.object.name !== "GHOST_MARKER"
+    );
   }
 
   raycastGround(event) {
