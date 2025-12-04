@@ -9,22 +9,21 @@ export class RouteManager {
 
     // -- State --
     this.currentRouteNodes = [];
-    this.savedRoutes = [];
+    this.savedRoutes = []; // { nodes, stats, mesh, color }
 
     // -- Visuals --
     this.markers = [];
     this.currentPathMesh = null;
 
     this.servedNodes = new Set();
-
     this.servedCoordinates = [];
-
     this.ROAD_OFFSET = 2.5;
 
     this.onRouteChanged = null;
     this.gameManager = null;
-
     this.vehicleSystem = null;
+
+    // Draft state
     this.latestPathPoints = [];
   }
 
@@ -35,7 +34,6 @@ export class RouteManager {
   setGameManager(gm) {
     this.gameManager = gm;
   }
-
 
   initGraph(data) {
     this.graphData = data;
@@ -54,58 +52,234 @@ export class RouteManager {
     });
   }
 
-  // Helper to check if a node is covered
-  isNodeServed(nodeId) {
-    return this.servedNodes.has(parseInt(nodeId));
+  // ============================
+  // Save / Load / Serialization
+  // ============================
+
+  getSerializableRoutes() {
+    // We only save the node IDs and the color. 
+    // Mesh and stats can be rebuilt.
+    return this.savedRoutes.map(r => ({
+      nodes: r.nodes,
+      color: r.color
+    }));
   }
 
-  // Rebuild the Set of served nodes
-  refreshServedNodes() {
+  loadRoutes(routesData) {
+    // 1. Cleanup existing
+    this.savedRoutes.forEach(r => {
+      if (r.mesh) {
+        this.scene.remove(r.mesh);
+        r.mesh.geometry.dispose();
+      }
+    });
+    this.savedRoutes = [];
     this.servedNodes.clear();
-    this.servedCoordinates = [];
 
-    this.savedRoutes.forEach(route => {
-      route.nodes.forEach(nodeId => {
-        if (!this.servedNodes.has(nodeId)) {
-          this.servedNodes.add(nodeId);
+    if (this.vehicleSystem) this.vehicleSystem.clearVehicles();
 
-          const node = this.graphData.nodes[nodeId];
-          if (node) {
-            // Cache World Coordinates (x, z)
-            // Note: node.y in graphData is already flipped to match World Z
-            this.servedCoordinates.push({ x: node.x, z: node.y });
-          }
-        }
-      });
+    // 2. Rebuild each route
+    routesData.forEach((data, index) => {
+      this.rebuildRouteFromData(data.nodes, data.color || this.getRandomColor(), index);
+    });
+
+    this.refreshServedNodes();
+  }
+
+  rebuildRouteFromData(nodes, color, routeIndex) {
+    // 1. Calculate Path Geometry
+    const pathResult = this.calculateGeometryFromNodes(nodes);
+    if (!pathResult) return;
+
+    // 2. Create Mesh
+    const tubeMat = new THREE.MeshBasicMaterial({ color: color });
+    const mesh = new THREE.Mesh(pathResult.geometry, tubeMat);
+    this.scene.add(mesh);
+
+    // 3. Spawn Bus
+    if (this.vehicleSystem && pathResult.points.length > 0) {
+      this.vehicleSystem.addBusToRoute(pathResult.points, color, routeIndex);
+    }
+
+    // 4. Calculate Stats
+    const ridership = this.calculateRidership(nodes);
+
+    // 5. Store
+    this.savedRoutes.push({
+      nodes: [...nodes],
+      stats: { length: pathResult.length, cost: 0, ridership }, // Cost is sunk history, doesn't matter for load
+      mesh: mesh,
+      color: color
     });
   }
 
-  // Returns distance in meters. Returns Infinity if no routes exist.
-  getDistanceToNearestTransit(x, z) {
-    if (this.servedCoordinates.length === 0) return Infinity;
-
-    let minSq = Infinity;
-
-    // Optimization: Standard loop is faster than forEach for high freq calls
-    for (let i = 0; i < this.servedCoordinates.length; i++) {
-      const sc = this.servedCoordinates[i];
-      const dx = sc.x - x;
-      const dz = sc.z - z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < minSq) minSq = d2;
-    }
-
-    return Math.sqrt(minSq);
+  getRandomColor() {
+    const colors = ["#ef4444", "#f97316", "#f59e0b", "#84cc16", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6", "#d946ef"];
+    return colors[Math.floor(Math.random() * colors.length)];
   }
 
+  // ============================
+  // Gameplay Actions
+  // ============================
+
+  saveCurrentRoute() {
+    if (this.currentRouteNodes.length < 2 || !this.currentPathMesh) return;
+
+    const length = this.currentPathMesh.userData.length || 0;
+    const cost = this.gameManager.getProjectedCost(length);
+
+    if (!this.gameManager.canAfford(cost)) {
+      alert("Insufficient Funds!");
+      return;
+    }
+
+    this.gameManager.deductFunds(cost);
+
+    // 1. Define Color (Random default)
+    const color = this.getRandomColor();
+
+    // 2. Finalize Visuals
+    this.currentPathMesh.material.color.set(color);
+
+    // 3. Register Route
+    const routeIndex = this.savedRoutes.length;
+
+    if (this.vehicleSystem && this.latestPathPoints.length > 0) {
+      this.vehicleSystem.addBusToRoute(this.latestPathPoints, color, routeIndex);
+    }
+
+    const ridership = this.calculateRidership(this.currentRouteNodes);
+
+    this.savedRoutes.push({
+      nodes: [...this.currentRouteNodes],
+      stats: { length, cost, ridership },
+      mesh: this.currentPathMesh,
+      color: color
+    });
+
+    // Cleanup draft state
+    this.currentPathMesh = null;
+    this.resetDraftingState();
+    this.refreshServedNodes();
+    this.gameManager.recalculateApproval();
+    this.gameManager.updateUI();
+  }
+
+  updateRouteColor(index, hexColor) {
+    if (index < 0 || index >= this.savedRoutes.length) return;
+
+    const route = this.savedRoutes[index];
+    route.color = hexColor;
+
+    // Update Track Mesh
+    if (route.mesh) {
+      route.mesh.material.color.set(hexColor);
+    }
+
+    // Update Vehicles
+    if (this.vehicleSystem) {
+      this.vehicleSystem.updateRouteColor(index, hexColor);
+    }
+  }
+
+  deleteSavedRoute(index) {
+    if (index < 0 || index >= this.savedRoutes.length) return;
+
+    const route = this.savedRoutes[index];
+    if (route.mesh) {
+      this.scene.remove(route.mesh);
+      route.mesh.geometry.dispose();
+    }
+
+    // We can't easily remove buses for just one route without refactoring array indices
+    // Simplification: Reload all buses or mark them as dead. 
+    // To keep it simple: We will remove the route data, and rebuild the vehicle system's arrays relative to new indices.
+
+    // 1. Remove from array
+    this.savedRoutes.splice(index, 1);
+
+    // 2. Refresh simulation (easiest way to handle index shifts)
+    // Save current state -> Clear Vehicles -> Rebuild Vehicles
+    if (this.vehicleSystem) {
+      this.vehicleSystem.clearVehicles();
+      this.savedRoutes.forEach((r, idx) => {
+        // Need to regenerate points for the bus system
+        const pathRes = this.calculateGeometryFromNodes(r.nodes);
+        if (pathRes && pathRes.points.length > 0) {
+          this.vehicleSystem.addBusToRoute(pathRes.points, r.color, idx);
+        }
+      });
+    }
+
+    this.refreshServedNodes();
+    this.gameManager.recalculateApproval();
+    this.gameManager.updateUI();
+  }
+
+  editSavedRoute(index) {
+    // Delete and pull back to draft
+    if (index < 0 || index >= this.savedRoutes.length) return;
+
+    // We actually just delete it and put nodes in draft
+    // The player loses the "sunk cost" of construction in this simple version
+    const route = this.savedRoutes[index];
+    this.currentRouteNodes = [...route.nodes];
+
+    // Delete the existing
+    this.deleteSavedRoute(index);
+
+    // Visualize draft
+    this.currentRouteNodes.forEach(nodeId => this.addMarkerVisual(nodeId));
+    this.updatePathVisuals();
+  }
+
+  // ============================
+  // Helpers
+  // ============================
+
+  calculateGeometryFromNodes(nodeList) {
+    if (nodeList.length < 2) return null;
+
+    let fullPathPoints = [];
+    let totalDist = 0;
+
+    for (let i = 0; i < nodeList.length - 1; i++) {
+      const start = nodeList[i];
+      const end = nodeList[i + 1];
+      const segmentEdges = this.computePathAStar(start, end);
+
+      if (!segmentEdges) continue;
+
+      segmentEdges.forEach(step => {
+        let dist = step.edgeData.length;
+        if (!dist) {
+          const p1 = step.edgeData.points[0];
+          const p2 = step.edgeData.points[step.edgeData.points.length - 1];
+          dist = Math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2);
+        }
+        totalDist += dist;
+
+        const rawPoints = step.edgeData.points;
+        let segmentPoints = rawPoints.map(p => new THREE.Vector2(p[0], p[1]));
+        if (step.isReverse) segmentPoints.reverse();
+
+        const offsetSegment = this.getOffsetPath(segmentPoints, this.ROAD_OFFSET);
+        offsetSegment.forEach(p => fullPathPoints.push(new THREE.Vector3(p.x, 0.5, p.y)));
+      });
+    }
+
+    if (fullPathPoints.length < 2) return null;
+
+    const curve = new THREE.CatmullRomCurve3(fullPathPoints);
+    const geometry = new THREE.TubeGeometry(curve, fullPathPoints.length, 1.5, 6, false);
+
+    return { geometry, length: totalDist, points: fullPathPoints };
+  }
 
   calculateRidership(nodeList) {
     if (!this.graphData || nodeList.length < 2) return 0;
-
     let totalPop = 0;
     let totalJobs = 0;
-
-    // Sum census data for all nodes traversed by the route
     nodeList.forEach(nodeId => {
       const node = this.graphData.nodes[nodeId];
       if (node) {
@@ -113,20 +287,12 @@ export class RouteManager {
         totalJobs += (node.jobs || 0);
       }
     });
-
     const synergy = Math.min(totalPop, totalJobs);
-
-    // Efficiency Factor: How balanced is the route?
-    // + Base multiplier (arbitrary game balance constant)
     const GAME_BALANCE_MULTIPLIER = 5.0;
-
-
     return Math.floor(synergy * GAME_BALANCE_MULTIPLIER);
   }
 
-  // ============================
-  // API Methods
-  // ============================
+  // ... (Existing Pathfinding & Drafting Methods) ...
 
   addNodeByWorldPosition(vector3) {
     if (!this.graphData) return;
@@ -152,62 +318,6 @@ export class RouteManager {
     }
   }
 
-
-  saveCurrentRoute() {
-    if (this.currentRouteNodes.length < 2 || !this.currentPathMesh) return;
-
-    const length = this.currentPathMesh.userData.length || 0;
-    const cost = this.gameManager.getProjectedCost(length);
-
-    // 1. Check Funds
-    if (!this.gameManager.canAfford(cost)) {
-      alert("Insufficient Funds!");
-      return;
-    }
-
-    // 2. Pay
-    this.gameManager.deductFunds(cost);
-
-    // Spawn bus
-    if (this.vehicleSystem && this.latestPathPoints.length > 0) {
-      this.vehicleSystem.addBusToRoute(this.latestPathPoints);
-    }
-
-    // 3. Freeze & Save
-    this.currentPathMesh.material.color.setHex(0x10B981);
-
-    const ridership = this.calculateRidership(this.currentRouteNodes);
-
-    this.savedRoutes.push({
-      nodes: [...this.currentRouteNodes],
-      stats: { length, cost, ridership },
-      mesh: this.currentPathMesh
-    });
-
-    this.currentPathMesh = null;
-    this.resetDraftingState();
-
-    this.refreshServedNodes();
-
-    // Force UI update to show new total riders
-    this.gameManager.updateUI();
-  }
-
-  editSavedRoute(index) {
-    if (index < 0 || index >= this.savedRoutes.length) return;
-    this.clearCurrentRoute();
-    const route = this.savedRoutes[index];
-    this.currentRouteNodes = [...route.nodes];
-    if (route.mesh) { this.scene.remove(route.mesh); route.mesh.geometry.dispose(); }
-    this.savedRoutes.splice(index, 1);
-
-    this.refreshServedNodes();
-
-    this.currentRouteNodes.forEach(nodeId => this.addMarkerVisual(nodeId));
-    this.updatePathVisuals();
-    this.gameManager.updateUI(); // Update UI since we removed a route (income drops)
-  }
-
   clearCurrentRoute() {
     if (this.currentPathMesh) { this.scene.remove(this.currentPathMesh); this.currentPathMesh.geometry.dispose(); this.currentPathMesh = null; }
     this.resetDraftingState();
@@ -220,20 +330,7 @@ export class RouteManager {
     if (this.onRouteChanged) this.onRouteChanged({ length: 0, cost: 0, ridership: 0 });
   }
 
-  deleteSavedRoute(index) {
-    if (index < 0 || index >= this.savedRoutes.length) return;
-    const route = this.savedRoutes[index];
-    if (route.mesh) { this.scene.remove(route.mesh); route.mesh.geometry.dispose(); }
-    this.savedRoutes.splice(index, 1);
-    this.refreshServedNodes();
-    this.gameManager.updateUI();
-  }
-
   getSavedRoutes() { return this.savedRoutes; }
-
-  // ============================
-  // Visuals & Logic
-  // ============================
 
   updatePathVisuals() {
     if (this.currentRouteNodes.length < 2) {
@@ -241,40 +338,15 @@ export class RouteManager {
         this.scene.remove(this.currentPathMesh);
         this.currentPathMesh = null;
       }
-      // Report 0 stats
       if (this.onRouteChanged) this.onRouteChanged({ length: 0, cost: 0, ridership: 0 });
       return;
     }
 
-    let fullPathPoints = [];
-    let totalDist = 0;
+    // Reuse logic
+    const result = this.calculateGeometryFromNodes(this.currentRouteNodes);
+    if (!result) return;
 
-    for (let i = 0; i < this.currentRouteNodes.length - 1; i++) {
-      const start = this.currentRouteNodes[i];
-      const end = this.currentRouteNodes[i + 1];
-      const segmentEdges = this.computePathAStar(start, end);
-
-      if (!segmentEdges) continue;
-
-      segmentEdges.forEach(step => {
-        let dist = step.edgeData.length;
-        if (!dist) {
-          const p1 = step.edgeData.points[0];
-          const p2 = step.edgeData.points[step.edgeData.points.length - 1];
-          dist = Math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2);
-        }
-        totalDist += dist;
-
-        const rawPoints = step.edgeData.points;
-        let segmentPoints = rawPoints.map(p => new THREE.Vector2(p[0], p[1]));
-        if (step.isReverse) segmentPoints.reverse();
-
-        const offsetSegment = this.getOffsetPath(segmentPoints, this.ROAD_OFFSET);
-        offsetSegment.forEach(p => fullPathPoints.push(new THREE.Vector3(p.x, 0.5, p.y)));
-      });
-    }
-
-    this.latestPathPoints = fullPathPoints;
+    this.latestPathPoints = result.points;
 
     // Rebuild Mesh
     if (this.currentPathMesh) {
@@ -282,25 +354,19 @@ export class RouteManager {
       this.currentPathMesh.geometry.dispose();
     }
 
-    if (fullPathPoints.length < 2) return;
-
-    const curve = new THREE.CatmullRomCurve3(fullPathPoints);
-    const tubeGeom = new THREE.TubeGeometry(curve, fullPathPoints.length, 1.5, 6, false);
     const tubeMat = new THREE.MeshBasicMaterial({ color: this.settings.colors.route });
-
-    this.currentPathMesh = new THREE.Mesh(tubeGeom, tubeMat);
-    this.currentPathMesh.userData.length = totalDist;
+    this.currentPathMesh = new THREE.Mesh(result.geometry, tubeMat);
+    this.currentPathMesh.userData.length = result.length;
     this.scene.add(this.currentPathMesh);
 
     this.updateMarkerColors();
 
-    // -- CALCULATE LIVE GAMEPLAY STATS --
     const projectedRiders = this.calculateRidership(this.currentRouteNodes);
-    const projectedCost = this.gameManager ? this.gameManager.getProjectedCost(totalDist) : 0;
+    const projectedCost = this.gameManager ? this.gameManager.getProjectedCost(result.length) : 0;
 
     if (this.onRouteChanged) {
       this.onRouteChanged({
-        length: totalDist,
+        length: result.length,
         cost: projectedCost,
         ridership: projectedRiders
       });
@@ -330,9 +396,35 @@ export class RouteManager {
     this.updateMarkerColors();
   }
 
-  // ============================
-  // Algorithms
-  // ============================
+  refreshServedNodes() {
+    this.servedNodes.clear();
+    this.servedCoordinates = [];
+
+    this.savedRoutes.forEach(route => {
+      route.nodes.forEach(nodeId => {
+        if (!this.servedNodes.has(nodeId)) {
+          this.servedNodes.add(nodeId);
+          const node = this.graphData.nodes[nodeId];
+          if (node) {
+            this.servedCoordinates.push({ x: node.x, z: node.y });
+          }
+        }
+      });
+    });
+  }
+
+  getDistanceToNearestTransit(x, z) {
+    if (this.servedCoordinates.length === 0) return Infinity;
+    let minSq = Infinity;
+    for (let i = 0; i < this.servedCoordinates.length; i++) {
+      const sc = this.servedCoordinates[i];
+      const dx = sc.x - x;
+      const dz = sc.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < minSq) minSq = d2;
+    }
+    return Math.sqrt(minSq);
+  }
 
   findNearestNode(x, z) {
     let closestId = null;

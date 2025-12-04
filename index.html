@@ -11,6 +11,9 @@
 <body>
   <button id="ui-toggle" title="Toggle Menu">☰</button>
 
+  <!-- Hidden Input for Loading Games -->
+  <input type="file" id="file-load-game" style="display: none;" accept=".json" />
+
   <!-- Floating Income Feedback -->
   <div id="income-float"
     style="position:absolute; top:60px; left:220px; color:#10B981; font-weight:bold; font-size:20px; opacity:0; transition: all 1s ease-out; z-index:90; text-shadow:0 1px 2px white;">
@@ -19,6 +22,12 @@
   <div id="ui-container">
     <div class="header">
       <h2>Route Planner</h2>
+
+      <!-- Save/Load System -->
+      <div style="display:flex; gap:5px; margin-bottom:10px;">
+        <button id="btn-save-game" class="secondary" style="flex:1; font-size:12px;">💾 Save</button>
+        <button id="btn-load-game" class="secondary" style="flex:1; font-size:12px;">📂 Load</button>
+      </div>
 
       <!-- Global Stats -->
       <div

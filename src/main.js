@@ -55,7 +55,6 @@ function init() {
   vehicleSystem = new VehicleSystem(scene);
   routeManager.setVehicleSystem(vehicleSystem); // Inject into RouteManager
 
-  gameManager.start(); // Start the loop
 
   // 3. Input
   inputManager = new InputManager(camera, renderer.domElement, scene, controls);
@@ -88,6 +87,7 @@ function init() {
   ]).then(([visual, routing]) => {
     routeManager.initGraph(routing);
     renderCity(visual);
+    gameManager.start(); // Start the loop
   });
 
   animate();

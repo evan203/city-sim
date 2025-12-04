@@ -22,13 +22,68 @@ export class GameManager {
 
   start() {
     this.buildCensusArrays();
-    this.recalculateApproval(); // Initial calc
+    this.recalculateApproval();
     this.updateUI();
 
+    if (this.gameLoopInterval) clearInterval(this.gameLoopInterval);
     this.gameLoopInterval = setInterval(() => {
       this.processDay();
     }, 5000);
   }
+
+  // ==========================
+  // Save / Load System
+  // ==========================
+
+  saveGame() {
+    const data = {
+      version: 1,
+      timestamp: Date.now(),
+      gameState: {
+        budget: this.budget,
+        day: this.day,
+        approval: this.approvalRating
+      },
+      routes: this.routeManager.getSerializableRoutes()
+    };
+
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `city_transit_save_day${this.day}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  loadGame(jsonString) {
+    try {
+      const data = JSON.parse(jsonString);
+
+      // 1. Restore State
+      this.budget = data.gameState.budget;
+      this.day = data.gameState.day;
+
+      // 2. Restore Routes
+      // This will clear existing routes and rebuild meshes/vehicles
+      this.routeManager.loadRoutes(data.routes);
+
+      // 3. Recalculate Logic
+      this.buildCensusArrays();
+      this.recalculateApproval();
+      this.updateUI();
+
+      console.log("Game loaded successfully.");
+    } catch (e) {
+      console.error("Failed to load save file", e);
+      alert("Error loading save file. See console.");
+    }
+  }
+
+  // ==========================
+  // Core Logic
+  // ==========================
 
   buildCensusArrays() {
     if (!this.routeManager.graphData) return;
@@ -51,7 +106,6 @@ export class GameManager {
     }
   }
 
-  // UPDATED: Weighted Approval Calculation
   recalculateApproval() {
     if (!this.censusNodes || this.censusNodes.length === 0) {
       this.approvalRating = 0;
@@ -62,7 +116,7 @@ export class GameManager {
     let totalMaxScore = 0; // The score if everyone had 0m walk
 
     // Constants for walking distance
-    const MAX_WALK_DIST = 600; // Meters. Beyond this, satisfaction is 0.
+    const MAX_WALK_DIST = 1700; // Meters. Beyond this, satisfaction is 0.
     const IDEAL_WALK_DIST = 50; // Meters. Below this, satisfaction is 100%.
 
     for (const node of this.censusNodes) {
@@ -79,8 +133,6 @@ export class GameManager {
         satisfaction = Math.max(0, satisfaction);
 
         // 4. Add weighted score (Satisfaction * People Count)
-        // A high-rise (count=100) at 50% satisfaction adds 50 points.
-        // A house (count=3) at 50% satisfaction adds 1.5 points.
         totalWeightedScore += (satisfaction * node.count);
       }
     }
