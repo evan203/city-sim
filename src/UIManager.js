@@ -225,9 +225,11 @@ export class UIManager {
       btnEdit.title = "Redraw Route";
       btnEdit.style.padding = "4px 8px";
       btnEdit.onclick = () => {
-        // Edit flow: Enter draft mode with existing data
+        // --- FIX IS HERE ---
+        // 1. Enter draft mode first (this resets the drafting state)
+        this.enterDraftMode();
+        // 2. Load the route data (this populates the drafting state)
         this.routeManager.editSavedRoute(index);
-        this.enterDraftMode(); // UI Change
       };
 
       const btnDel = document.createElement('button');
