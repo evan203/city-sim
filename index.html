@@ -4,12 +4,36 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>3D City Sim</title>
+  <title>Transit Simulator</title>
   <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
-  <button id="ui-toggle" title="Toggle Menu">☰</button>
+  <!-- 1. MAIN MENU OVERLAY -->
+  <div id="main-menu">
+    <div class="menu-content">
+      <h1 class="game-title">Transit Simulator</h1>
+
+      <div class="menu-group">
+        <label for="map-selector">Select City</label>
+        <select id="map-selector">
+          <option value="madison_wi">Madison, WI</option>
+          <!-- Future cities go here -->
+        </select>
+      </div>
+
+      <div class="menu-group row">
+        <button id="btn-save-game" class="secondary">💾 Save State</button>
+        <button id="btn-load-game" class="secondary">📂 Load State</button>
+      </div>
+
+      <button id="btn-start" class="btn-start" disabled>Loading Assets...</button>
+    </div>
+  </div>
+
+  <!-- In-Game UI Buttons -->
+  <button id="ui-toggle" title="Toggle Route Panel">☰</button>
+  <button id="menu-toggle" title="Open Main Menu">⚙️</button>
 
   <!-- Hidden Input for Loading Games -->
   <input type="file" id="file-load-game" style="display: none;" accept=".json" />
@@ -26,16 +50,10 @@
       style="text-decoration: none; color: #333;">OpenStreetMap</a> contributors
   </div>
 
-
+  <!-- Route Planner UI -->
   <div id="ui-container">
     <div class="header">
       <h2>Route Planner</h2>
-
-      <!-- Save/Load System -->
-      <div style="display:flex; gap:5px; margin-bottom:10px;">
-        <button id="btn-save-game" class="secondary" style="flex:1; font-size:12px;">💾 Save</button>
-        <button id="btn-load-game" class="secondary" style="flex:1; font-size:12px;">📂 Load</button>
-      </div>
 
       <!-- Global Stats -->
       <div

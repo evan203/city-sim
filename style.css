@@ -4,11 +4,109 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* --- MAIN MENU OVERLAY --- */
+#main-menu {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(30, 41, 59, 0.95); /* Dark blue-grey, slight opacity */
+    backdrop-filter: blur(8px);
+    z-index: 2000; /* Highest priority */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.4s ease-in-out, opacity 0.4s ease-in-out;
+}
+
+#main-menu.hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.menu-content {
+    background: white;
+    padding: 40px;
+    border-radius: 16px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    width: 100%;
+    max-width: 400px;
+    text-align: center;
+}
+
+.game-title {
+    font-size: 32px;
+    font-weight: 800;
+    color: #1e293b;
+    margin: 0 0 30px 0;
+    letter-spacing: -1px;
+    text-transform: uppercase;
+    background: -webkit-linear-gradient(45deg, #2563EB, #10B981);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.menu-group {
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.menu-group.row {
+    display: flex;
+    gap: 10px;
+}
+
+.menu-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: bold;
+    color: #64748b;
+    margin-bottom: 5px;
+    text-transform: uppercase;
+}
+
+select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 14px;
+    background: #f8fafc;
+}
+
+/* Start Button Specifics */
+.btn-start {
+    width: 100%;
+    padding: 15px;
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 10px;
+    transition: all 0.3s;
+    background-color: #94a3b8; /* Gray initially */
+    color: white;
+    cursor: not-allowed;
+}
+
+.btn-start.ready {
+    background-color: #10B981; /* Green */
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.btn-start.ready:hover {
+    background-color: #059669;
+    transform: translateY(-2px);
+}
+
+/* --- HUD BUTTONS --- */
 #ui-toggle {
     position: absolute;
     top: 20px;
     left: 20px;
-    z-index: 100; /* Above UI container */
+    z-index: 100;
     width: 40px;
     height: 40px;
     border-radius: 8px;
@@ -23,9 +121,29 @@ body {
     border: none;
 }
 
+#menu-toggle {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 100;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: white;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    font-size: 20px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border: none;
+}
+
+/* --- EXISTING UI CONTAINER --- */
 #ui-container {
     position: absolute;
-    top: 70px; /* Moved down to make room for toggle */
+    top: 70px; 
     left: 20px;
     width: 280px;
     background: rgba(255, 255, 255, 0.95);
@@ -36,13 +154,10 @@ body {
     user-select: none;
     max-height: 80vh;
     overflow-y: auto;
-    
-    /* Animation for toggling */
     transition: transform 0.3s ease, opacity 0.3s ease;
     transform-origin: top left;
 }
 
-/* Class to hide UI */
 #ui-container.hidden {
     transform: scale(0.95);
     opacity: 0;
@@ -51,13 +166,11 @@ body {
 
 .header h2 { margin: 0 0 5px 0; font-size: 18px; color: #333; }
 .header p { margin: 0; font-size: 12px; color: #666; }
-
 .section { margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px; }
 .section h3 { margin: 0 0 10px 0; font-size: 14px; text-transform: uppercase; color: #888; letter-spacing: 0.5px; }
-
 .stat-row { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 10px; font-size: 16px; }
-
 .button-row { display: flex; gap: 10px; }
+
 button {
     flex: 1;
     padding: 8px 12px;
@@ -69,12 +182,10 @@ button {
     transition: opacity 0.2s;
 }
 button:hover { opacity: 0.8; }
-
 .primary { background-color: #2563EB; color: white; }
 .danger { background-color: #ef4444; color: white; }
 .secondary { background-color: #e5e7eb; color: #374151; }
 
-/* Route List */
 #route-list { list-style: none; padding: 0; margin: 0; }
 #route-list li {
     background: #f3f4f6;
@@ -82,31 +193,11 @@ button:hover { opacity: 0.8; }
     padding: 10px;
     border-radius: 6px;
     display: flex;
-    flex-wrap: wrap; /* Allow wrapping for buttons */
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
     font-size: 14px;
     gap: 5px;
 }
-#route-list li span {
-    flex-grow: 1;
-    font-weight: 500;
-}
-
-#route-list li button {
-    flex: 0;
-    margin-left: 10px;
-    padding: 4px 8px;
-    font-size: 12px;
-    background: #fee2e2;
-    color: #991b1b;
-}
-
-.btn-icon {
-    flex: 0 0 auto;
-    padding: 4px 8px;
-    font-size: 12px;
-    margin-left: 2px;
-}
-.btn-edit { background: #dbeafe; color: #1e40af; }
-.btn-del { background: #fee2e2; color: #991b1b; }
+#route-list li span { flex-grow: 1; font-weight: 500; }
+.btn-icon { flex: 0 0 auto; padding: 4px 8px; font-size: 12px; margin-left: 2px; }

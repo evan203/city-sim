@@ -34,20 +34,20 @@ const SETTINGS = {
   graphics: {
     shadows: true,
     antialias: true,
-    maxPixelRatio: 1.0, // lower == more blurry, 2 or 3 for high res
-    farClip: 6000, // view distance limit
+    maxPixelRatio: 1.0,
+    farClip: 6000,
   }
 };
 
 let scene, camera, renderer, controls;
 let inputManager, routeManager, uiManager, gameManager, vehicleSystem;
 
-let cityMesh; // The single mesh containing all buildings
-let buildingRegistry = []; // Stores { data, nearestNodeId, startIndex, count } for each building
+let cityMesh;
+let buildingRegistry = [];
 
 const clock = new THREE.Clock();
 
-let currentViewMode = 'none'; // 'none', 'zoning', 'approval'
+let currentViewMode = 'none';
 
 function init() {
   setupScene();
@@ -72,7 +72,6 @@ function init() {
   // Wiring Click
   inputManager.onClick = (point, object) => {
     // Only allow adding nodes if we are actually in drafting mode
-    // (RouteManager handles the check internally, but we pass the intent)
     if (object.name === "GROUND") routeManager.addNodeByWorldPosition(point);
   };
 
@@ -81,7 +80,7 @@ function init() {
     routeManager.dragNode(markerObject, newPoint);
   };
 
-  // Wiring Hover (NEW)
+  // Wiring Hover
   inputManager.onHover = (point) => {
     routeManager.updateGhostMarker(point);
   };
@@ -105,6 +104,9 @@ function init() {
     routeManager.initGraph(routing);
     renderCity(visual);
     gameManager.start();
+
+    // --- UPDATE: Notify UI that loading is done ---
+    uiManager.setLoadingComplete();
   });
 
   animate();
@@ -115,22 +117,16 @@ function updateBuildingColors() {
 
   const colorAttribute = cityMesh.geometry.attributes.color;
   const colorArray = colorAttribute.array;
-
-  // Temp variables to avoid creating objects in loop
   const _color = new THREE.Color();
 
-  // Iterate through every building in our registry
   for (let i = 0; i < buildingRegistry.length; i++) {
     const entry = buildingRegistry[i];
     const data = entry.data;
-
-    // --- 1. Determine Target Color based on Mode ---
 
     // STANDARD VIEW
     if (currentViewMode === 'none') {
       _color.copy(SETTINGS.colors.building);
     }
-
     // ZONING VIEW
     else if (currentViewMode === 'zoning') {
       if (data.type === 'residential') {
@@ -141,10 +137,8 @@ function updateBuildingColors() {
         _color.copy(SETTINGS.colors.building);
       }
     }
-
     // APPROVAL VIEW
     else if (currentViewMode === 'approval') {
-      // Use the pre-calculated nearest ID from registry
       const node = routeManager.graphData.nodes[entry.nearestNodeId];
 
       if (node) {
@@ -155,17 +149,13 @@ function updateBuildingColors() {
         } else {
           const MAX_DIST = 600;
           const factor = Math.min(1.0, dist / MAX_DIST);
-          // Lerp Good -> Bad
           _color.copy(SETTINGS.colors.coverageGood).lerp(SETTINGS.colors.coverageBad, factor);
         }
       } else {
-        // Fallback if node not found
         _color.copy(SETTINGS.colors.coverageBad);
       }
     }
 
-    // --- 2. Apply Color to Vertices ---
-    // We update the specific range of vertices belonging to this building
     const start = entry.startIndex;
     const end = start + entry.count;
 
@@ -177,7 +167,6 @@ function updateBuildingColors() {
     }
   }
 
-  // Flag that the geometry colors have changed so GPU updates
   colorAttribute.needsUpdate = true;
 }
 
@@ -202,7 +191,7 @@ function setupScene() {
   document.documentElement.style.height = '100%';
   document.body.style.margin = '0';
   document.body.style.height = '100%';
-  document.body.style.overflow = 'hidden'; // Prevents scrollbars
+  document.body.style.overflow = 'hidden';
 
   renderer.shadowMap.enabled = SETTINGS.graphics.shadows;
   document.body.appendChild(renderer.domElement);
@@ -220,8 +209,8 @@ function setupScene() {
     dirLight.shadow.camera.top = 1500;
     dirLight.shadow.camera.bottom = -1500;
     dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 3000; // Must be > 1225 to reach the ground
-    dirLight.shadow.bias = -0.0001;    // Clean up shadow artifacts
+    dirLight.shadow.camera.far = 3000;
+    dirLight.shadow.bias = -0.0001;
   }
 
   scene.add(dirLight);
@@ -248,16 +237,11 @@ function resizeRendererToDisplaySize() {
   const rect = canvas.getBoundingClientRect();
 
   const pixelRatio = Math.min(window.devicePixelRatio, SETTINGS.graphics.maxPixelRatio);
-
-  // Calculate the required resolution
   const width = Math.round(rect.width * pixelRatio);
   const height = Math.round(rect.height * pixelRatio);
-
-  // Check if the canvas is already the right size
   const needResize = canvas.width !== width || canvas.height !== height;
 
   if (needResize) {
-    // Resize the render buffer, but do NOT change CSS style (false)
     renderer.setSize(width, height, false);
   }
 
@@ -269,8 +253,6 @@ function resizeRendererToDisplaySize() {
 // ==========================================
 
 function renderCity(data) {
-  // Helper for non-interactive layers (Water, Parks, Roads) - Optimizing these too is good practice
-  // We will merge these per type as well to keep draw calls low
   const createMergedLayer = (items, color, height, lift, isExtruded) => {
     if (!items || !items.length) return;
     const geometries = [];
@@ -309,7 +291,7 @@ function renderCity(data) {
     if (geometries.length === 0) return;
 
     const mergedGeom = BufferGeometryUtils.mergeGeometries(geometries);
-    const mat = new THREE.MeshLambertMaterial({ color: color }); // Simple color for static layers
+    const mat = new THREE.MeshLambertMaterial({ color: color });
     const mesh = new THREE.Mesh(mergedGeom, mat);
     mesh.receiveShadow = SETTINGS.graphics.shadows;
     if (isExtruded) mesh.castShadow = SETTINGS.graphics.shadows;
@@ -321,7 +303,7 @@ function renderCity(data) {
     if (!buildings || !buildings.length) return;
 
     const geometries = [];
-    buildingRegistry = []; // Reset registry
+    buildingRegistry = [];
 
     let currentVertexOffset = 0;
 
@@ -345,18 +327,17 @@ function renderCity(data) {
       const geom = new THREE.ExtrudeGeometry(shape, { depth: b.height, bevelEnabled: false });
       geom.rotateX(-Math.PI / 2);
 
-      // 3. Pre-calculate Logic Data (Nearest Node)
+      // 3. Pre-calculate Logic Data
       const bx = b.shape.outer[0][0];
       const by = b.shape.outer[0][1];
       const nearestId = routeManager.findNearestNode(bx, -by);
 
       // 4. Register Metadata
-      // We need to know how many vertices this building has to color it later
       const vertexCount = geom.attributes.position.count;
 
       buildingRegistry.push({
-        data: b.data,           // Zoning/Density data
-        nearestNodeId: nearestId, // For approval view
+        data: b.data,
+        nearestNodeId: nearestId,
         startIndex: currentVertexOffset,
         count: vertexCount
       });
@@ -371,7 +352,6 @@ function renderCity(data) {
     const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries);
 
     // 6. Initialize Vertex Colors Attribute
-    // Create a color buffer filled with white (1,1,1) by default
     const count = mergedGeometry.attributes.position.count;
     const colors = new Float32Array(count * 3);
     for (let i = 0; i < count * 3; i++) {
@@ -381,7 +361,7 @@ function renderCity(data) {
 
     // 7. Material Setup
     const mat = new THREE.MeshLambertMaterial({
-      vertexColors: true, // IMPORTANT
+      vertexColors: true,
       shadowSide: THREE.BackSide
     });
 
@@ -409,7 +389,7 @@ function animate() {
     camera.updateProjectionMatrix();
   }
 
-  const delta = clock.getDelta(); // Get time since last frame
+  const delta = clock.getDelta();
 
   controls.update();
   if (vehicleSystem) {

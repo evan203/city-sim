@@ -2,24 +2,29 @@ export class UIManager {
   constructor(routeManager) {
     this.routeManager = routeManager;
     this.gameManager = null;
+    this.isSimulationReady = false;
 
-    // Panels
+    // -- MAIN MENU ELEMENTS --
+    this.elMainMenu = document.getElementById('main-menu');
+    this.btnStart = document.getElementById('btn-start');
+    this.btnMenuToggle = document.getElementById('menu-toggle');
+    this.selectMap = document.getElementById('map-selector');
+
+    // -- GAME UI ELEMENTS --
     this.panelMain = document.getElementById('ui-main-menu');
     this.panelDraft = document.getElementById('ui-draft-menu');
+    this.elContainer = document.getElementById('ui-container');
 
-    // UI Elements
+    // Stats
     this.elCurrentLength = document.getElementById('current-length');
     this.elCurrentCost = document.getElementById('current-cost');
     this.elCurrentRiders = document.getElementById('current-riders');
-
     this.elBudget = document.getElementById('val-budget');
     this.elDay = document.getElementById('val-day');
     this.elTotalRiders = document.getElementById('val-riders');
     this.elApproval = document.getElementById('val-approval');
-
     this.elIncomeFloat = document.getElementById('income-float');
     this.elRouteList = document.getElementById('route-list');
-    this.elContainer = document.getElementById('ui-container');
 
     // Buttons
     this.btnCreate = document.getElementById('btn-create-route');
@@ -36,11 +41,45 @@ export class UIManager {
     this.selectViewMode = document.getElementById('view-mode');
 
     this.onViewModeChanged = null;
+
     this.initListeners();
+    this.initSafetyChecks();
   }
 
   initListeners() {
-    // --- MODE SWITCHING ---
+    // --- MAIN MENU INTERACTIONS ---
+
+    // 1. Start Button
+    this.btnStart.addEventListener('click', () => {
+      if (this.isSimulationReady) {
+        this.elMainMenu.classList.add('hidden');
+      }
+    });
+
+    // 2. Map Selector
+    this.selectMap.addEventListener('change', (e) => {
+      if (confirm("Switching maps will lose unsaved progress. Continue?")) {
+        // Logic to reload map would go here. 
+        // For now, since we only have one map, we just reload the page to be safe
+        window.location.reload();
+      } else {
+        // Revert selection if canceled (conceptually simple, hard to do without tracking previous val)
+        e.target.value = "madison_wi";
+      }
+    });
+
+    // 3. Menu Toggle (Top Right)
+    this.btnMenuToggle.addEventListener('click', () => {
+      // Toggle menu visibility
+      if (this.elMainMenu.classList.contains('hidden')) {
+        this.elMainMenu.classList.remove('hidden');
+      } else {
+        this.elMainMenu.classList.add('hidden');
+      }
+    });
+
+    // --- GAME UI INTERACTIONS ---
+
     this.btnCreate.addEventListener('click', () => {
       this.enterDraftMode();
     });
@@ -57,7 +96,6 @@ export class UIManager {
       this.routeManager.clearCurrentRoute();
       this.exitDraftMode();
     });
-    // ----------------------
 
     this.btnToggle.addEventListener('click', () => {
       this.elContainer.classList.toggle('hidden');
@@ -89,11 +127,30 @@ export class UIManager {
         if (this.routeManager.gameManager) {
           this.routeManager.gameManager.loadGame(evt.target.result);
           this.renderRouteList();
+          // Auto close menu on load
+          this.elMainMenu.classList.add('hidden');
         }
       };
       reader.readAsText(file);
       e.target.value = '';
     });
+  }
+
+  initSafetyChecks() {
+    // Prompt before closing tab
+    window.addEventListener('beforeunload', (e) => {
+      // Modern browsers don't show custom text, but this triggers the generic "Are you sure?"
+      e.preventDefault();
+      e.returnValue = '';
+    });
+  }
+
+  // Called by Main.js when Promise.all is finished
+  setLoadingComplete() {
+    this.isSimulationReady = true;
+    this.btnStart.disabled = false;
+    this.btnStart.textContent = "Enter Simulation";
+    this.btnStart.classList.add('ready');
   }
 
   enterDraftMode() {
@@ -225,10 +282,10 @@ export class UIManager {
       btnEdit.title = "Redraw Route";
       btnEdit.style.padding = "4px 8px";
       btnEdit.onclick = () => {
-        // --- FIX IS HERE ---
-        // 1. Enter draft mode first (this resets the drafting state)
+        // Hide menu if open
+        this.elMainMenu.classList.add('hidden');
+
         this.enterDraftMode();
-        // 2. Load the route data (this populates the drafting state)
         this.routeManager.editSavedRoute(index);
       };
 
