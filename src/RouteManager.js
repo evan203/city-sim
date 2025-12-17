@@ -8,14 +8,14 @@ export class RouteManager {
     this.graphData = null;
 
     // -- State --
-    this.isDrafting = false; // New flag
+    this.isDrafting = false;
     this.currentRouteNodes = [];
     this.savedRoutes = [];
 
     // -- Visuals --
     this.markers = [];
     this.currentPathMesh = null;
-    this.ghostMarker = null; // Transparent sphere
+    this.ghostMarker = null;
 
     this.servedNodes = new Set();
     this.servedCoordinates = [];
@@ -27,6 +27,10 @@ export class RouteManager {
 
     // Draft state
     this.latestPathPoints = [];
+
+    // -- Spatial Optimization --
+    this.spatialGrid = {};
+    this.cellSize = 200; // Tune this: Larger = more nodes per cell, Smaller = more empty cells
 
     this.initGhostMarker();
   }
@@ -42,9 +46,13 @@ export class RouteManager {
   initGraph(data) {
     this.graphData = data;
     this.graphData.adjacency = {};
+
+    // 1. Fix Coordinates
     for (let key in this.graphData.nodes) {
       this.graphData.nodes[key].y = -this.graphData.nodes[key].y;
     }
+
+    // 2. Build Adjacency
     this.graphData.edges.forEach((edge, index) => {
       if (edge.points) edge.points.forEach(p => { p[1] = -p[1]; });
       if (!this.graphData.adjacency[edge.u]) this.graphData.adjacency[edge.u] = [];
@@ -54,6 +62,90 @@ export class RouteManager {
         this.graphData.adjacency[edge.v].push({ to: edge.u, cost: edge.length || 1, edgeIndex: index, isReverse: true });
       }
     });
+
+    // 3. Build Spatial Index (The Performance Fix)
+    this.buildSpatialIndex();
+  }
+
+  // ============================
+  // Spatial Optimization
+  // ============================
+
+  buildSpatialIndex() {
+    this.spatialGrid = {};
+
+    // Iterate over all nodes once
+    for (const [id, node] of Object.entries(this.graphData.nodes)) {
+      const key = this.getGridKey(node.x, node.y);
+      if (!this.spatialGrid[key]) {
+        this.spatialGrid[key] = [];
+      }
+      // Store simple object for fast iteration
+      this.spatialGrid[key].push({ id: parseInt(id), x: node.x, y: node.y });
+    }
+  }
+
+  getGridKey(x, y) {
+    const cx = Math.floor(x / this.cellSize);
+    const cy = Math.floor(y / this.cellSize);
+    return `${cx}:${cy}`;
+  }
+
+  // Optimized Nearest Node Search
+  findNearestNode(x, z) {
+    if (!this.graphData) return null;
+
+    const centerCx = Math.floor(x / this.cellSize);
+    const centerCy = Math.floor(z / this.cellSize);
+
+    let closestId = null;
+    let minDist = Infinity;
+
+    // Check center cell and immediate 8 neighbors
+    // This reduces checks from ~5000 to ~20
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const key = `${centerCx + i}:${centerCy + j}`;
+        const cellNodes = this.spatialGrid[key];
+
+        if (cellNodes) {
+          for (let k = 0; k < cellNodes.length; k++) {
+            const node = cellNodes[k];
+            const dx = node.x - x;
+            const dz = node.y - z; // graph node.y is actually z in 3D space
+            const d2 = dx * dx + dz * dz;
+
+            if (d2 < minDist) {
+              minDist = d2;
+              closestId = node.id;
+            }
+          }
+        }
+      }
+    }
+
+    // Fallback: If no node was found in the local grid (e.g. sparse area), 
+    // do a global search. This rarely happens if cellSize is reasonable.
+    if (closestId === null) {
+      return this.findNearestNodeBruteForce(x, z);
+    }
+
+    return closestId;
+  }
+
+  findNearestNodeBruteForce(x, z) {
+    let closestId = null;
+    let minDist = Infinity;
+    for (const [id, node] of Object.entries(this.graphData.nodes)) {
+      const dx = node.x - x;
+      const dz = node.y - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < minDist) {
+        minDist = d2;
+        closestId = parseInt(id);
+      }
+    }
+    return closestId;
   }
 
   // ============================
@@ -69,7 +161,7 @@ export class RouteManager {
     });
     this.ghostMarker = new THREE.Mesh(geom, mat);
     this.ghostMarker.visible = false;
-    this.ghostMarker.name = "GHOST_MARKER"; // Ignore in raycasting
+    this.ghostMarker.name = "GHOST_MARKER";
     this.scene.add(this.ghostMarker);
   }
 
@@ -81,10 +173,9 @@ export class RouteManager {
   stopDrafting() {
     this.isDrafting = false;
     this.ghostMarker.visible = false;
-    this.clearCurrentRoute(); // Clean up visuals
+    this.clearCurrentRoute();
   }
 
-  // Called by Main.js input listener on mouse move
   updateGhostMarker(worldPoint) {
     if (!this.isDrafting || !this.graphData) {
       this.ghostMarker.visible = false;
@@ -202,9 +293,7 @@ export class RouteManager {
       color: color
     });
 
-    // We do NOT call stopDrafting here, UIManager handles the logic to call stopDrafting
-    // We just return success
-    this.currentPathMesh = null; // Detach mesh from manager so it stays in scene
+    this.currentPathMesh = null;
     this.refreshServedNodes();
     this.gameManager.recalculateApproval();
     this.gameManager.updateUI();
@@ -247,14 +336,12 @@ export class RouteManager {
   }
 
   editSavedRoute(index) {
-    // Delete and pull back to draft
     if (index < 0 || index >= this.savedRoutes.length) return;
 
     const route = this.savedRoutes[index];
     this.currentRouteNodes = [...route.nodes];
     this.deleteSavedRoute(index);
 
-    // Visualize draft immediately
     this.currentRouteNodes.forEach(nodeId => this.addMarkerVisual(nodeId));
     this.updatePathVisuals();
   }
@@ -319,7 +406,7 @@ export class RouteManager {
   }
 
   addNodeByWorldPosition(vector3) {
-    if (!this.isDrafting) return; // BLOCK INPUT IF NOT DRAFTING
+    if (!this.isDrafting) return;
     if (!this.graphData) return;
 
     const nodeId = this.findNearestNode(vector3.x, vector3.z);
@@ -331,7 +418,7 @@ export class RouteManager {
   }
 
   dragNode(markerObject, worldPoint) {
-    if (!this.isDrafting) return; // BLOCK DRAG IF NOT DRAFTING
+    if (!this.isDrafting) return;
     if (!this.graphData) return;
     const index = this.markers.indexOf(markerObject);
     if (index === -1) return;
@@ -400,7 +487,7 @@ export class RouteManager {
 
   updateMarkerColors() {
     this.markers.forEach((marker, i) => {
-      let color = 0xFFFF00; // Yellow
+      let color = 0xFFFF00;
       if (i === 0) color = this.settings.colors.pathStart;
       else if (i === this.markers.length - 1) color = this.settings.colors.pathEnd;
       marker.material.color.setHex(color);
@@ -449,21 +536,6 @@ export class RouteManager {
       if (d2 < minSq) minSq = d2;
     }
     return Math.sqrt(minSq);
-  }
-
-  findNearestNode(x, z) {
-    let closestId = null;
-    let minDist = Infinity;
-    for (const [id, node] of Object.entries(this.graphData.nodes)) {
-      const dx = node.x - x;
-      const dz = node.y - z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < minDist) {
-        minDist = d2;
-        closestId = parseInt(id);
-      }
-    }
-    return closestId;
   }
 
   computePathAStar(start, end) {
@@ -530,4 +602,3 @@ export class RouteManager {
     return newPath;
   }
 }
-
