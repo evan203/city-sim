@@ -52,6 +52,7 @@ let currentViewMode = 'none'; // 'none', 'zoning', 'approval'
 function init() {
   setupScene();
 
+
   // 1. Core Systems
   routeManager = new RouteManager(scene, SETTINGS);
   uiManager = new UIManager(routeManager);
@@ -381,7 +382,6 @@ function renderCity(data) {
     // 7. Material Setup
     const mat = new THREE.MeshLambertMaterial({
       vertexColors: true, // IMPORTANT
-      roughness: 0.6,
       shadowSide: THREE.BackSide
     });
 
