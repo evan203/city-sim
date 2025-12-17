@@ -35,8 +35,7 @@ const SETTINGS = {
     shadows: true,
     antialias: true,
     maxPixelRatio: 1.0, // lower == more blurry, 2 or 3 for high res
-    materialType: 'standard', // or 'standard'
-    farClip: 9000, // view distance limit
+    farClip: 6000, // view distance limit
   }
 };
 
@@ -188,7 +187,7 @@ function updateBuildingColors() {
 function setupScene() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(SETTINGS.colors.background);
-  scene.fog = new THREE.FogExp2(SETTINGS.colors.background, 0.0002);
+  scene.fog = new THREE.FogExp2(SETTINGS.colors.background, 0.0003);
 
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, SETTINGS.graphics.farClip);
   camera.position.set(0, 800, 800);
@@ -380,21 +379,11 @@ function renderCity(data) {
     mergedGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     // 7. Material Setup
-    let mat;
-    if (SETTINGS.graphics.materialType === 'standard') {
-      mat = new THREE.MeshStandardMaterial({
-        vertexColors: true, // IMPORTANT: valid for merged mesh
-        roughness: 0.6,
-        side: THREE.DoubleSide,
-        shadowSide: THREE.BackSide
-      });
-    } else {
-      mat = new THREE.MeshLambertMaterial({
-        vertexColors: true, // IMPORTANT
-        roughness: 0.6,
-        shadowSide: THREE.BackSide
-      });
-    }
+    const mat = new THREE.MeshLambertMaterial({
+      vertexColors: true, // IMPORTANT
+      roughness: 0.6,
+      shadowSide: THREE.BackSide
+    });
 
     // 8. Create and Add Single Mesh
     cityMesh = new THREE.Mesh(mergedGeometry, mat);
